@@ -183,12 +183,10 @@ class ZillowScraper(BaseScraper):
 
         filter_state = FILTER_MAP.get(criteria.property_type, ALL_HOMES_FILTER).copy()
 
-        if criteria.min_price > 0:
-            filter_state["price"] = filter_state.get("price", {})
-            filter_state["price"]["min"] = criteria.min_price
-        if criteria.max_price < 999_999_999:
-            filter_state["price"] = filter_state.get("price", {})
-            filter_state["price"]["max"] = criteria.max_price
+        # Only set price in filter_state if user specified limits
+        # (pyzill adds beds/baths/price to filter_state if not None)
+        min_price_arg = criteria.min_price if criteria.min_price > 0 else None
+        max_price_arg = criteria.max_price if criteria.max_price < 999_999_999 else None
 
         search_value = f"{criteria.city}, {criteria.state}"
         unique_zpids: set[str] = set()
@@ -205,21 +203,29 @@ class ZillowScraper(BaseScraper):
                 data = pyzill_search(
                     pagination=page,
                     search_value=search_value,
-                    min_beds=0,
-                    max_beds=0,
-                    min_bathrooms=0,
-                    max_bathrooms=0,
-                    min_price=criteria.min_price,
-                    max_price=criteria.max_price if criteria.max_price < 999_999_999 else 0,
+                    min_beds=None,
+                    max_beds=None,
+                    min_bathrooms=None,
+                    max_bathrooms=None,
+                    min_price=min_price_arg,
+                    max_price=max_price_arg,
                     ne_lat=ne_lat,
                     ne_long=ne_long,
                     sw_lat=sw_lat,
                     sw_long=sw_long,
-                    zoom_value=8,
+                    zoom_value=1,
                     filter_state=filter_state,
                 )
             except Exception as e:
-                logger.warning(f"pyzill search failed on page {page}: {e}")
+                err_msg = str(e)
+                if "Expecting value" in err_msg or "JSONDecodeError" in type(e).__name__:
+                    logger.warning(
+                        f"Zillow returned empty/non-JSON response on page {page}. "
+                        "This usually means rate limiting or bot detection. "
+                        "Try again in a few minutes or use a VPN."
+                    )
+                else:
+                    logger.warning(f"pyzill search failed on page {page}: {e}")
                 break
 
             # Use mapResults (all listings up to 500) on first page,
