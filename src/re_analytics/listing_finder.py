@@ -19,7 +19,7 @@ console = Console()
 UTAH_STATES = {"UT"}
 
 
-async def find_listings(criteria: SearchCriteria) -> list[Listing]:
+async def find_listings(criteria: SearchCriteria, debug: bool = False) -> list[Listing]:
     """Find listings matching criteria using the best available scrapers.
 
     For Utah: tries RESO API first, then UtahRealEstate browser scraper.
@@ -31,6 +31,8 @@ async def find_listings(criteria: SearchCriteria) -> list[Listing]:
 
     for scraper in scrapers:
         try:
+            if debug:
+                scraper.debug = True
             console.print(f"  Searching [cyan]{scraper.name}[/cyan]...", end=" ")
             results = await scraper.search(criteria)
             console.print(f"found [green]{len(results)}[/green] listings")

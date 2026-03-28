@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import typer
@@ -89,8 +90,14 @@ def listings(
     property_type: str = typer.Option(None, "--type", "-t", help="Property type: multi-family, single-family, any"),
     output: str = typer.Option(None, "--output", "-o", help="Export results to CSV file"),
     source: str = typer.Option(None, "--source", help="Scraper source: utahrealestate, utahrealestate-api, zillow"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Save debug screenshots and HTML dumps"),
 ):
     """Search for investment property listings."""
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
+    else:
+        logging.basicConfig(level=logging.WARNING)
+
     console.print("\n[bold]What to Buy?[/bold]\n", style="cyan")
 
     # Interactive prompts for missing values
@@ -132,10 +139,15 @@ def listings(
         f"({_format_price(min_price)} - {_format_price(max_price)})...\n"
     )
 
-    results = asyncio.run(find_listings(criteria))
+    results = asyncio.run(find_listings(criteria, debug=debug))
 
     if not results:
         console.print("[yellow]No listings found.[/yellow] Try broadening your search.")
+        if debug:
+            console.print(
+                "\n[dim]Debug files saved to ./debug/ — check screenshots and HTML dumps "
+                "to see what the scrapers received from the sites.[/dim]"
+            )
         raise typer.Exit()
 
     # Sort by price

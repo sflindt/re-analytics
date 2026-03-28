@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Response
@@ -143,6 +144,10 @@ class UtahRealEstateBrowser(BaseScraper):
                 if page_num == 1:
                     await self._try_set_filters(page, criteria)
                     await page.wait_for_timeout(3000)
+
+                # Save debug output
+                if self.debug:
+                    await self._save_debug(page, f"utahrealestate_page{page_num}")
 
                 # Extract listings from the DOM
                 page_listings = await self._extract_listings(page, criteria)
@@ -524,6 +529,18 @@ class UtahRealEstateBrowser(BaseScraper):
 
         await page.close()
         return enriched
+
+    async def _save_debug(self, page: Page, prefix: str) -> None:
+        """Save screenshot and HTML dump for debugging."""
+        debug_dir = Path("debug")
+        debug_dir.mkdir(exist_ok=True)
+        try:
+            await page.screenshot(path=str(debug_dir / f"{prefix}.png"), full_page=True)
+            html = await page.content()
+            (debug_dir / f"{prefix}.html").write_text(html, encoding="utf-8")
+            logger.info(f"Debug saved: debug/{prefix}.png and debug/{prefix}.html")
+        except Exception as e:
+            logger.warning(f"Failed to save debug output: {e}")
 
     async def close(self) -> None:
         if self._browser:

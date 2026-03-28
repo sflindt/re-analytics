@@ -11,6 +11,7 @@ class BaseScraper(ABC):
     """Base interface for real estate listing scrapers."""
 
     name: str = "base"
+    debug: bool = False
 
     @abstractmethod
     async def search(self, criteria: SearchCriteria) -> list[Listing]:

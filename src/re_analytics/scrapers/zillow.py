@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 
 from playwright.async_api import async_playwright, Browser, Page, BrowserContext
 
@@ -103,6 +104,10 @@ class ZillowScraper(BaseScraper):
             except Exception as e:
                 logger.warning(f"Failed to load Zillow page {page_num}: {e}")
                 break
+
+            # Save debug output
+            if self.debug:
+                await self._save_debug(page, f"zillow_page{page_num}")
 
             # Try to extract listings from the page's embedded JSON data
             # Zillow embeds search results in a script tag as __NEXT_DATA__
@@ -285,6 +290,18 @@ class ZillowScraper(BaseScraper):
         except Exception as e:
             logger.debug(f"Failed to parse Zillow DOM card: {e}")
             return None
+
+    async def _save_debug(self, page: Page, prefix: str) -> None:
+        """Save screenshot and HTML dump for debugging."""
+        debug_dir = Path("debug")
+        debug_dir.mkdir(exist_ok=True)
+        try:
+            await page.screenshot(path=str(debug_dir / f"{prefix}.png"), full_page=True)
+            html = await page.content()
+            (debug_dir / f"{prefix}.html").write_text(html, encoding="utf-8")
+            logger.info(f"Debug saved: debug/{prefix}.png and debug/{prefix}.html")
+        except Exception as e:
+            logger.warning(f"Failed to save debug output: {e}")
 
     async def close(self) -> None:
         if self._browser:
