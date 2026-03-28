@@ -13,7 +13,7 @@ from geopy import Point
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 
-import pyzill
+from pyzill.search import search as pyzill_search
 
 from re_analytics.models import Listing, PropertyType, SearchCriteria
 from re_analytics.scrapers.base import BaseScraper
@@ -202,7 +202,7 @@ class ZillowScraper(BaseScraper):
                 )
 
             try:
-                data = pyzill.search(
+                data = pyzill_search(
                     pagination=page,
                     search_value=search_value,
                     min_beds=0,
