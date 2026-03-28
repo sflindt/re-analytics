@@ -6,9 +6,10 @@ import logging
 
 from rich.console import Console
 
-from re_analytics.models import Listing, SearchCriteria
+from re_analytics.models import InvestmentParams, Listing, SearchCriteria
 from re_analytics.scrapers.base import BaseScraper
 from re_analytics.scrapers.utahrealestate_api import UtahRealEstateAPI
+from re_analytics.scrapers.utahrealestate_web import UtahRealEstateWebScraper
 from re_analytics.scrapers.redfin import RedfinScraper
 from re_analytics.scrapers.zillow import ZillowScraper
 from re_analytics.scrapers.rentcast import RentcastEnricher
@@ -24,8 +25,8 @@ async def find_listings(criteria: SearchCriteria, debug: bool = False) -> list[L
     """Find listings matching criteria using the best available scrapers.
 
     Source routing:
-      Utah: UtahRealEstate API (if configured) → Redfin → Zillow
-      Other: Redfin → Zillow
+      Utah: UtahRealEstate API (if configured) → UtahRealEstate Web → Zillow (pyzill) → Redfin
+      Other: Zillow (pyzill) → Redfin
 
     If specific sources are requested in criteria.sources, only those are used.
     """
@@ -69,6 +70,7 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
     if criteria.sources:
         source_map: dict[str, type[BaseScraper]] = {
             "utahrealestate-api": UtahRealEstateAPI,
+            "utahrealestate-web": UtahRealEstateWebScraper,
             "redfin": RedfinScraper,
             "zillow": ZillowScraper,
         }
@@ -77,15 +79,19 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
     scrapers: list[BaseScraper] = []
 
     if criteria.state.upper() in UTAH_STATES:
+        # RESO API is best if configured
         api = UtahRealEstateAPI()
         if api.is_configured:
             scrapers.append(api)
 
-    # Redfin as primary free source (no auth needed)
-    scrapers.append(RedfinScraper())
+        # Web scraper as fallback for Utah
+        scrapers.append(UtahRealEstateWebScraper())
 
-    # Zillow as additional source
+    # Zillow via pyzill (primary nationwide source)
     scrapers.append(ZillowScraper())
+
+    # Redfin as additional source
+    scrapers.append(RedfinScraper())
 
     return scrapers
 
@@ -113,5 +119,7 @@ def _data_richness(listing: Listing) -> int:
         listing.sqft, listing.bedrooms, listing.bathrooms,
         listing.num_units, listing.gross_income, listing.noi,
         listing.year_built, listing.days_on_market, listing.mls_number,
+        listing.zestimate, listing.rent_zestimate, listing.tax_assessed_value,
+        listing.latitude, listing.longitude,
     ]
     return sum(1 for f in fields if f is not None)
