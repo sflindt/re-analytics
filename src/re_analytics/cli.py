@@ -100,20 +100,24 @@ def listings(
 
     console.print("\n[bold]What to Buy?[/bold]\n", style="cyan")
 
-    # Interactive prompts for missing values
+    # Interactive prompts only when values are missing
+    interactive = not city
     if not city:
         city = typer.prompt("City")
-    state = typer.prompt("State", default=state)
+    if interactive:
+        state = typer.prompt("State", default=state)
 
-    if min_price == 0:
+    if interactive and min_price == 0:
         min_price_str = typer.prompt("Min price ($)", default="0")
         min_price = int(min_price_str.replace(",", "").replace("$", ""))
-    if max_price == 999_999_999:
+    if interactive and max_price == 999_999_999:
         max_price_str = typer.prompt("Max price ($)", default="999999")
         max_price = int(max_price_str.replace(",", "").replace("$", ""))
 
-    if not property_type:
+    if not property_type and interactive:
         prop_type = _property_type_prompt()
+    elif not property_type:
+        prop_type = PropertyType.MULTI_FAMILY
     else:
         type_map = {
             "multi-family": PropertyType.MULTI_FAMILY,

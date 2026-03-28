@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -43,7 +44,11 @@ class ZillowScraper(BaseScraper):
     async def _ensure_browser(self) -> Browser:
         if self._browser is None:
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            launch_kwargs: dict = {"headless": True}
+            chromium_path = os.environ.get("CHROMIUM_PATH")
+            if chromium_path:
+                launch_kwargs["executable_path"] = chromium_path
+            self._browser = await self._playwright.chromium.launch(**launch_kwargs)
         return self._browser
 
     def _build_search_url(self, criteria: SearchCriteria, page: int = 1) -> str:
