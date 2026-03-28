@@ -89,8 +89,8 @@ def listings(
     max_price: int = typer.Option(999_999_999, "--max-price", help="Maximum price"),
     property_type: str = typer.Option(None, "--type", "-t", help="Property type: multi-family, single-family, any"),
     output: str = typer.Option(None, "--output", "-o", help="Export results to CSV file"),
-    source: str = typer.Option(None, "--source", help="Scraper source: utahrealestate, utahrealestate-api, zillow"),
-    debug: bool = typer.Option(False, "--debug", "-d", help="Save debug screenshots and HTML dumps"),
+    source: str = typer.Option(None, "--source", help="Scraper source: utahrealestate-api, redfin, zillow"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging of HTTP requests/responses"),
 ):
     """Search for investment property listings."""
     if debug:
@@ -149,8 +149,8 @@ def listings(
         console.print("[yellow]No listings found.[/yellow] Try broadening your search.")
         if debug:
             console.print(
-                "\n[dim]Debug files saved to ./debug/ — check screenshots and HTML dumps "
-                "to see what the scrapers received from the sites.[/dim]"
+                "\n[dim]Debug logging enabled — check the output above for HTTP status codes "
+                "and response details from each scraper.[/dim]"
             )
         raise typer.Exit()
 

@@ -49,22 +49,29 @@ class TestDeduplicate:
 
 
 class TestSelectScrapers:
-    def test_utah_with_no_api_key_uses_browser(self):
+    def test_utah_includes_redfin_and_zillow(self):
         criteria = SearchCriteria(city="Ogden", state="UT")
         scrapers = _select_scrapers(criteria)
         names = [s.name for s in scrapers]
-        assert "utahrealestate" in names or "utahrealestate-api" in names
+        assert "redfin" in names
         assert "zillow" in names
 
-    def test_non_utah_uses_zillow(self):
+    def test_non_utah_uses_redfin_and_zillow(self):
         criteria = SearchCriteria(city="Phoenix", state="AZ")
         scrapers = _select_scrapers(criteria)
         names = [s.name for s in scrapers]
+        assert "redfin" in names
         assert "zillow" in names
-        assert "utahrealestate" not in names
+        assert "utahrealestate-api" not in names
 
     def test_explicit_source(self):
         criteria = SearchCriteria(city="Ogden", state="UT", sources=["zillow"])
         scrapers = _select_scrapers(criteria)
         assert len(scrapers) == 1
         assert scrapers[0].name == "zillow"
+
+    def test_explicit_redfin_source(self):
+        criteria = SearchCriteria(city="Ogden", state="UT", sources=["redfin"])
+        scrapers = _select_scrapers(criteria)
+        assert len(scrapers) == 1
+        assert scrapers[0].name == "redfin"
