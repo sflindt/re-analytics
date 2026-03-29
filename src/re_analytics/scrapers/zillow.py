@@ -13,9 +13,8 @@ import json
 import logging
 import os
 import re
-import urllib.parse
 
-import httpx
+from scrapfly import ScrapflyClient, ScrapeConfig
 from geopy import Point
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
@@ -25,7 +24,6 @@ from re_analytics.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-SCRAPFLY_BASE = "https://api.scrapfly.io/scrape"
 ZILLOW_SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
 
 # Pre-computed city centers for major cities
@@ -218,41 +216,31 @@ class ZillowScraper(BaseScraper):
     def __init__(self, debug: bool = False):
         self.debug = debug
         self._api_key = os.environ.get("SCRAPFLY_API_KEY", "")
-        self._client = httpx.AsyncClient(timeout=60.0)
+        self._scrapfly: ScrapflyClient | None = None
+        if self._api_key:
+            self._scrapfly = ScrapflyClient(key=self._api_key)
 
     async def _scrapfly_zillow_search(self, body: dict) -> dict:
-        """Send a Zillow search request via Scrapfly API."""
-        params = {
-            "key": self._api_key,
-            "url": ZILLOW_SEARCH_URL,
-            "asp": "true",
-            "render_js": "false",
-            "method": "PUT",
-            "headers[Content-Type]": "application/json",
-            "headers[Accept]": "*/*",
-            "headers[Origin]": "https://www.zillow.com",
-            "body": json.dumps(body),
-            "country": "us",
-        }
-        resp = await self._client.get(SCRAPFLY_BASE, params=params)
-        resp.raise_for_status()
-        scrapfly_data = resp.json()
-
-        # Scrapfly wraps the response — the actual content is in result.content
-        content = scrapfly_data.get("result", {}).get("content", "")
+        """Send a Zillow search request via Scrapfly SDK."""
+        config = ScrapeConfig(
+            url=ZILLOW_SEARCH_URL,
+            method="PUT",
+            body=json.dumps(body),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "*/*",
+                "Origin": "https://www.zillow.com",
+            },
+            asp=True,
+            country="us",
+            render_js=False,
+        )
+        result = await self._scrapfly.async_scrape(config)
+        content = result.scrape_result["content"]
         if not content:
             raise ValueError("Scrapfly returned empty content")
-
+        logger.debug(f"Scrapfly response length: {len(content)} chars")
         return json.loads(content)
-
-    async def _pyzill_fallback(self, body_args: dict) -> dict:
-        """Try direct pyzill as fallback (works if curl_cffi isn't blocked)."""
-        try:
-            from pyzill.search import search as pyzill_search
-            return pyzill_search(**body_args)
-        except Exception as e:
-            logger.debug(f"pyzill fallback failed: {e}")
-            raise
 
     async def search(self, criteria: SearchCriteria) -> list[Listing]:
         city_key = criteria.city.strip().lower()
@@ -426,4 +414,5 @@ class ZillowScraper(BaseScraper):
             return None
 
     async def close(self) -> None:
-        await self._client.aclose()
+        if self._scrapfly:
+            self._scrapfly.close()

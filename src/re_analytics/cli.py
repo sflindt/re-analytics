@@ -98,13 +98,15 @@ def listings(
     down_pmt: float = typer.Option(0.25, "--down-pmt", help="Down payment percentage (0.25 = 25%)"),
     interest_rate: float = typer.Option(0.067, "--interest-rate", help="Annual mortgage interest rate"),
     insurance_rate: float = typer.Option(0.0043, "--insurance-rate", help="Annual insurance rate"),
+    log: str = typer.Option(None, "--log", help="Write debug log to file (e.g. --log debug.log)"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging of HTTP requests/responses"),
 ):
     """Search for investment property listings."""
-    if debug:
-        logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
-    else:
-        logging.basicConfig(level=logging.WARNING)
+    log_level = logging.DEBUG if (debug or log) else logging.WARNING
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log:
+        handlers.append(logging.FileHandler(log, mode="w"))
+    logging.basicConfig(level=log_level, format="%(name)s: %(message)s", handlers=handlers)
 
     console.print("\n[bold]What to Buy?[/bold]\n", style="cyan")
 
