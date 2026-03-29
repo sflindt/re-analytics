@@ -19,6 +19,7 @@ dependencies = [
     "playwright>=1.40",
     "pyzill>=1.0",
     "geopy>=2.0",
+    "streamlit>=1.30",
 ]
 
 [project.optional-dependencies]
