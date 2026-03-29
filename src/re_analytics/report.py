@@ -403,13 +403,22 @@ def _build_commentary(
     # National
     if rates and rates.mortgage_30yr and rates.fed_funds_rate:
         if rates.fed_funds_rate >= 4.5:
-            macro = (
-                f"The Federal Reserve is maintaining a restrictive monetary policy with the "
-                f"federal funds rate at {rates.fed_funds_rate:.2f}%. The 30-year fixed mortgage "
-                f"rate stands at {rates.mortgage_30yr:.2f}%, reflecting elevated borrowing costs. "
-                f"If inflation continues to moderate, rate cuts over the next 12-24 months could "
-                f"improve affordability and boost transaction volume."
-            )
+            if is_investment:
+                macro = (
+                    f"The Federal Reserve is maintaining a restrictive monetary policy with the "
+                    f"federal funds rate at {rates.fed_funds_rate:.2f}%. The 30-year fixed mortgage "
+                    f"rate stands at {rates.mortgage_30yr:.2f}%, increasing carrying costs and "
+                    f"compressing cash flow margins. If inflation moderates, rate cuts over the "
+                    f"next 12-24 months could improve deal economics."
+                )
+            else:
+                macro = (
+                    f"The Federal Reserve is maintaining a restrictive monetary policy with the "
+                    f"federal funds rate at {rates.fed_funds_rate:.2f}%. The 30-year fixed mortgage "
+                    f"rate stands at {rates.mortgage_30yr:.2f}%, which impacts monthly payments "
+                    f"and purchasing power. If inflation moderates, rate cuts over the next 12-24 "
+                    f"months could improve affordability."
+                )
         elif rates.fed_funds_rate >= 3.0:
             macro = (
                 f"The Fed funds rate at {rates.fed_funds_rate:.2f}% signals a moderately "
@@ -421,7 +430,7 @@ def _build_commentary(
             macro = (
                 f"With the fed funds rate at {rates.fed_funds_rate:.2f}% and 30-year mortgages "
                 f"at {rates.mortgage_30yr:.2f}%, the rate environment is accommodative. "
-                f"Lower rates support stronger property valuations and buyer purchasing power."
+                f"Lower rates support stronger purchasing power and more favorable monthly payments."
             )
         spread = rates.spread_over_treasury
         if spread and spread > 2.0:
@@ -483,12 +492,18 @@ def _build_commentary(
     else:
         if med_dom and med_dom > 30:
             sections["Key Takeaway"] = (
-                "Buyers have time and negotiating room. Use longer selling times as leverage."
+                f"Properties are averaging {med_dom:.0f} days on market, giving buyers time to "
+                f"evaluate options and negotiate. Homes priced below ${med_ppsf:,.0f}/sqft "
+                f"may represent the best value relative to the neighborhood."
+                if med_ppsf else
+                f"Properties are averaging {med_dom:.0f} days on market, giving buyers time to "
+                f"evaluate options and negotiate on price."
             )
         else:
             sections["Key Takeaway"] = (
-                "Get pre-approved and know your budget ceiling. Compare options across "
-                "neighborhoods and price points to find the best value."
+                "The market is moving quickly. Get pre-approved, know your budget ceiling, "
+                "and be ready to act. Compare options across neighborhoods and price points "
+                "to find the right home at the right price."
             )
 
     return sections
@@ -531,7 +546,8 @@ def generate_report(
 
     pdf.set_font("Helvetica", "", 13)
     pdf.set_text_color(180, 200, 230)
-    pdf.cell(0, 8, "Real Estate Market Intelligence", align="C", new_x="LMARGIN", new_y="NEXT")
+    subtitle = "Investment Property Intelligence" if is_investment else "Home Buying Intelligence"
+    pdf.cell(0, 8, subtitle, align="C", new_x="LMARGIN", new_y="NEXT")
 
     # Divider line on cover
     pdf.ln(8)
@@ -600,7 +616,7 @@ def generate_report(
         pdf.set_text_color(*LIGHT_TEXT)
         pdf.cell(stat_w, 4, label.upper(), align="C")
 
-    # Scope + Table of Contents on cover page
+    # Scope line
     zip_groups: dict[str, list[Listing]] = {}
     for l in listings:
         z = l.zip_code or "Unknown"
@@ -609,17 +625,78 @@ def generate_report(
     cities_in_data = sorted(set(l.city for l in listings if l.city))
     city_list = ", ".join(cities_in_data) if cities_in_data else city
 
-    pdf.set_y(pdf.get_y() + 18)
+    pdf.set_y(pdf.get_y() + 14)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*MID_TEXT)
     pdf.cell(0, 4, f"{len(listings):,} properties  |  {zip_list}  |  {city_list}", align="C",
              new_x="LMARGIN", new_y="NEXT")
 
-    pdf.ln(10)
+    # --- Buyer Profile ---
+    pdf.ln(8)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(*DARK_TEXT)
+    buyer_label = "INVESTOR PROFILE" if is_investment else "BUYER PROFILE"
+    pdf.cell(0, 6, buyer_label, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    # Compute estimated payment
+    mortgage_rate = rates.mortgage_30yr / 100 if rates and rates.mortgage_30yr else params.interest_rate
+    if target_price:
+        loan_amt = target_price * (1 - params.down_pmt_pct)
+        monthly_r = mortgage_rate / 12
+        n_payments = 360
+        if monthly_r > 0:
+            est_payment = loan_amt * (monthly_r * (1 + monthly_r) ** n_payments) / (
+                (1 + monthly_r) ** n_payments - 1
+            )
+        else:
+            est_payment = loan_amt / n_payments
+    else:
+        est_payment = None
+
+    # Build profile lines
+    profile_lines = []
+    if target_price:
+        profile_lines.append(f"Target Price: ${target_price:,}")
+    if target_beds:
+        profile_lines.append(f"Target Beds: {target_beds}")
+    if rates and rates.mortgage_30yr:
+        profile_lines.append(f"Est. Rate (30yr): {rates.mortgage_30yr:.2f}%")
+    if est_payment:
+        profile_lines.append(f"Est. Monthly P&I: ${est_payment:,.0f}*")
+    if is_investment:
+        profile_lines.append(f"Rent Assumption: ${params.per_bed_rent:,.0f}/bed/mo")
+
+    # Render 2 columns of profile items centered
+    pdf.set_font("Helvetica", "", 8.5)
+    pdf.set_text_color(*DARK_TEXT)
+    col_w = 80
+    x_left = (pdf.w - col_w * 2) / 2
+    for i, line in enumerate(profile_lines):
+        col = i % 2
+        if col == 0:
+            pdf.set_x(x_left)
+        else:
+            pdf.set_x(x_left + col_w)
+        pdf.cell(col_w, 5, line, align="L")
+        if col == 1 or i == len(profile_lines) - 1:
+            pdf.ln(5)
+
+    # Asterisk footnote
+    if est_payment:
+        pdf.set_font("Helvetica", "I", 6.5)
+        pdf.set_text_color(*LIGHT_TEXT)
+        pdf.cell(0, 3,
+                 f"* Assumes {params.down_pmt_pct:.0%} down payment, 30yr fixed, 740+ credit score. "
+                 "Actual payment will vary by lender, credit, and terms.",
+                 align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # --- Table of Contents ---
+    pdf.ln(6)
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_text_color(*DARK_TEXT)
     pdf.cell(0, 6, "CONTENTS", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(3)
+    pdf.ln(2)
 
     toc_items = [
         ("1  Market Snapshot", "Regional metrics, rates, price tiers, closed market, commentary"),
@@ -636,7 +713,7 @@ def generate_report(
         pdf.ln(1)
 
     # Disclaimer at bottom of cover
-    pdf.set_y(255)
+    pdf.set_y(258)
     pdf.set_font("Helvetica", "I", 6.5)
     pdf.set_text_color(*LIGHT_TEXT)
     pdf.multi_cell(0, 3, (
