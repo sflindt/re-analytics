@@ -8,6 +8,7 @@ import os
 import statistics
 from pathlib import Path
 
+import numpy as np
 import streamlit as st
 import pandas as pd
 
@@ -16,6 +17,7 @@ from re_analytics.models import (
     Listing,
     PropertyType,
     SearchCriteria,
+    calc_monthly_pmt,
     listings_to_csv,
 )
 from re_analytics.listing_finder import find_listings
@@ -111,6 +113,17 @@ st.markdown("""
         margin: 1.5rem 0;
     }
 
+    /* Deal highlight cards */
+    .metric-good [data-testid="stMetric"] {
+        border-left: 4px solid #28a745;
+    }
+    .metric-warn [data-testid="stMetric"] {
+        border-left: 4px solid #ffc107;
+    }
+    .metric-bad [data-testid="stMetric"] {
+        border-left: 4px solid #dc3545;
+    }
+
     /* Header brand */
     .brand-header {
         font-size: 1.6rem;
@@ -144,11 +157,82 @@ def _median(values: list) -> float | None:
     return round(statistics.median(vals), 1) if vals else None
 
 
+def _score_percentile(value: float | None, values: list[float], lower_is_better: bool = True) -> float:
+    """Return a 0-100 score for *value* relative to *values*.
+
+    If *lower_is_better* is True a value at the bottom of the range scores 100
+    and a value at the top scores 0. Reversed when lower_is_better=False.
+    Returns 50 (neutral) when value is None or the range is zero.
+    """
+    clean = [v for v in values if v is not None]
+    if value is None or len(clean) < 2:
+        return 50.0
+    lo, hi = min(clean), max(clean)
+    if hi == lo:
+        return 50.0
+    pct = (value - lo) / (hi - lo)  # 0 = lowest, 1 = highest
+    if lower_is_better:
+        return round((1 - pct) * 100, 1)
+    return round(pct * 100, 1)
+
+
+def _compute_investment_scores(listings: list[Listing], params: InvestmentParams) -> list[float]:
+    """Compute a 1-100 investment score for each listing.
+
+    Weights:
+        40% — Rent multiplier (lower is better)
+        30% — $/SqFt vs median (lower is better)
+        15% — DOM (higher = possibly more negotiable, higher is better)
+        15% — PITI vs estimated rent (lower PITI / rent ratio = better)
+    """
+    if not listings:
+        return []
+
+    rent_mults = [l.rent_multiplier(params.per_bed_rent) for l in listings]
+    ppsf_vals = [l.price_per_sqft for l in listings]
+    dom_vals = [l.days_on_market for l in listings]
+
+    piti_rent_ratios: list[float | None] = []
+    for l in listings:
+        piti = l.monthly_piti(params)
+        rent_est = l.rent_estimate(params.per_bed_rent)
+        if rent_est and rent_est > 0:
+            piti_rent_ratios.append(piti / (rent_est / 12))
+        else:
+            piti_rent_ratios.append(None)
+
+    scores = []
+    for i, l in enumerate(listings):
+        s_rent = _score_percentile(rent_mults[i], [v for v in rent_mults if v is not None], lower_is_better=True)
+        s_ppsf = _score_percentile(ppsf_vals[i], [v for v in ppsf_vals if v is not None], lower_is_better=True)
+        s_dom = _score_percentile(dom_vals[i], [v for v in dom_vals if v is not None], lower_is_better=False)
+        s_piti = _score_percentile(piti_rent_ratios[i], [v for v in piti_rent_ratios if v is not None], lower_is_better=True)
+
+        composite = 0.40 * s_rent + 0.30 * s_ppsf + 0.15 * s_dom + 0.15 * s_piti
+        # Clamp to 1-100
+        composite = max(1, min(100, round(composite)))
+        scores.append(composite)
+    return scores
+
+
+def _score_indicator(score: float) -> str:
+    """Return a colored circle indicator for a score value."""
+    if score >= 75:
+        return "🟢"
+    elif score >= 40:
+        return "🟡"
+    return "🔴"
+
+
 def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.DataFrame:
     """Convert listings to a display DataFrame."""
+    scores = _compute_investment_scores(listings, params)
     rows = []
-    for l in listings:
+    for i, l in enumerate(listings):
+        score = scores[i] if i < len(scores) else 50
         rows.append({
+            "Score": score,
+            "": _score_indicator(score),
             "Address": l.address,
             "City": l.city,
             "State": l.state,
@@ -167,7 +251,10 @@ def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.Dat
             "Latitude": l.latitude,
             "Longitude": l.longitude,
         })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Score", ascending=False).reset_index(drop=True)
+    return df
 
 
 # --- Sidebar ---
@@ -202,9 +289,22 @@ with st.sidebar:
     search_area = st.slider("Search Radius (sq mi)", min_value=10, max_value=200, value=50)
 
     st.markdown("---")
-    st.markdown("**Investment Assumptions**")
-    per_bed_rent = st.number_input("Rent / Bed ($/mo)", value=600, step=50)
-    down_pmt = st.slider("Down Payment %", min_value=5, max_value=50, value=25) / 100
+    search_mode = st.radio(
+        "I'm looking for a...",
+        ["Investment Property", "Personal Home"],
+        index=0,
+        key="search_mode",
+    )
+    is_investment = search_mode == "Investment Property"
+
+    if is_investment:
+        st.markdown("**Investment Assumptions**")
+        per_bed_rent = st.number_input("Rent / Bed ($/mo)", value=600, step=50)
+    else:
+        per_bed_rent = 600  # default, unused in personal mode
+
+    st.markdown("**Financing**")
+    down_pmt = st.slider("Down Payment %", min_value=5, max_value=50, value=25 if is_investment else 20) / 100
     interest_rate = st.number_input("Interest Rate %", value=6.7, step=0.1, format="%.1f") / 100
     insurance_rate = st.number_input("Insurance Rate %", value=0.43, step=0.01, format="%.2f") / 100
 
@@ -304,10 +404,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Tabs
-tab_market, tab_listings, tab_map, tab_rates = st.tabs([
-    "Market Analytics", "Listings", "Map", "Rate Environment"
-])
+# Tabs — mode-aware
+if is_investment:
+    tab_market, tab_listings, tab_map, tab_rates, tab_invest, tab_neighborhood = st.tabs([
+        "Market Analytics", "Listings", "Map", "Rate Environment",
+        "Investment Analysis", "Neighborhoods",
+    ])
+else:
+    tab_market, tab_listings, tab_map, tab_rates = st.tabs([
+        "Market Analytics", "Listings", "Map", "Rate Environment",
+    ])
+    tab_invest = None
+    tab_neighborhood = None
 
 
 # --- Tab 1: Market Analytics ---
@@ -446,28 +554,95 @@ with tab_listings:
 
     st.markdown("---")
 
+    # --- Filters ---
+    st.markdown("#### Filters")
+    fcol1, fcol2, fcol3 = st.columns([2, 1, 1])
+
+    price_min_data = int(df["Price"].min()) if not df.empty else 0
+    price_max_data = int(df["Price"].max()) if not df.empty else 1_000_000
+
+    with fcol1:
+        price_range = st.slider(
+            "Price Range",
+            min_value=price_min_data,
+            max_value=price_max_data,
+            value=(price_min_data, price_max_data),
+            step=10_000,
+            format="$%d",
+            key="listings_price_range",
+        )
+
+    with fcol2:
+        bed_options = sorted([int(b) for b in df["Beds"].dropna().unique()])
+        min_beds = st.selectbox(
+            "Min Bedrooms",
+            options=[0] + bed_options,
+            index=0,
+            key="listings_min_beds",
+        )
+
+    with fcol3:
+        sort_options = ["Score", "Price", "$/SqFt", "DOM", "Rent Mult"]
+        sort_by = st.selectbox(
+            "Sort By",
+            options=sort_options,
+            index=0,
+            key="listings_sort_by",
+        )
+
+    # Apply filters
+    filtered_df = df.copy()
+    filtered_df = filtered_df[
+        (filtered_df["Price"] >= price_range[0])
+        & (filtered_df["Price"] <= price_range[1])
+    ]
+    if min_beds > 0:
+        filtered_df = filtered_df[filtered_df["Beds"].fillna(0) >= min_beds]
+
+    # Apply sort
+    sort_ascending = sort_by != "Score"  # Score: descending; others: ascending
+    if sort_by in filtered_df.columns:
+        filtered_df = filtered_df.sort_values(
+            sort_by, ascending=sort_ascending, na_position="last"
+        ).reset_index(drop=True)
+
+    st.caption(f"Showing {len(filtered_df)} of {len(df)} listings")
+
+    st.markdown("---")
+
     # Make URL displayable
-    display_df = df.copy()
+    display_df = filtered_df.copy()
     if "URL" in display_df.columns:
         display_df["URL"] = display_df["URL"].apply(
             lambda x: x if pd.notna(x) and x else ""
         )
+
+    # Column config — hide investment columns in personal mode
+    col_cfg = {
+        "Score": st.column_config.ProgressColumn(
+            "Score", min_value=0, max_value=100, format="%d",
+        ),
+        "URL": st.column_config.LinkColumn("Listing", display_text="View"),
+        "Price": st.column_config.NumberColumn("Price", format="$%d"),
+        "$/SqFt": st.column_config.NumberColumn("$/SqFt", format="$%d"),
+        "DOM": st.column_config.NumberColumn("DOM", format="%d"),
+        "PITI": st.column_config.NumberColumn("PITI", format="$%d"),
+        "Latitude": None,
+        "Longitude": None,
+    }
+    if is_investment:
+        col_cfg["Rent Mult"] = st.column_config.NumberColumn("Rent Mult", format="%d")
+    else:
+        col_cfg["Score"] = None
+        col_cfg[""] = None  # score indicator
+        col_cfg["Rent Mult"] = None
 
     st.dataframe(
         display_df,
         use_container_width=True,
         hide_index=True,
         height=600,
-        column_config={
-            "URL": st.column_config.LinkColumn("Listing", display_text="View"),
-            "Price": st.column_config.NumberColumn("Price", format="$%d"),
-            "$/SqFt": st.column_config.NumberColumn("$/SqFt", format="$%d"),
-            "DOM": st.column_config.NumberColumn("DOM", format="%d"),
-            "Rent Mult": st.column_config.NumberColumn("Rent Mult", format="%d"),
-            "PITI": st.column_config.NumberColumn("PITI", format="$%d"),
-            "Latitude": None,
-            "Longitude": None,
-        },
+        column_config=col_cfg,
     )
 
     # CSV download
@@ -585,7 +760,7 @@ with tab_rates:
 
     st.markdown("---")
 
-    st.markdown("#### What This Means for Investors")
+    st.markdown("#### What This Means for " + ("Investors" if is_investment else "Buyers"))
 
     if rates.mortgage_30yr and rates.fed_funds_rate:
         if rates.fed_funds_rate >= 4.5:
@@ -646,3 +821,203 @@ with tab_rates:
         "Rate data is sourced from the Federal Reserve Economic Data (FRED) API maintained by the "
         "Federal Reserve Bank of St. Louis. Updated weekly (mortgage rates) and monthly (Fed funds)."
     )
+
+
+# --- Tab 5: Investment Analysis (only in investment mode) ---
+if tab_invest is not None:
+    with tab_invest:
+        st.markdown("#### Cash Flow Calculator")
+
+        med_price = _median([l.price for l in listings if l.price > 0])
+        default_price = int(med_price) if med_price else 400_000
+        med_beds = _median([l.bedrooms for l in listings if l.bedrooms])
+        default_rent = int((med_beds or 3) * inv_params.per_bed_rent)
+
+        calc_col1, calc_col2 = st.columns(2)
+        with calc_col1:
+            calc_price = st.number_input(
+                "Property Price ($)",
+                value=default_price,
+                step=25_000,
+                format="%d",
+                key="cf_price",
+            )
+            calc_rent = st.number_input(
+                "Monthly Rent Estimate ($)",
+                value=default_rent,
+                step=100,
+                format="%d",
+                key="cf_rent",
+            )
+
+        # Compute cash flow metrics using sidebar financing params
+        down_payment = calc_price * inv_params.down_pmt_pct
+        loan_amount = calc_price - down_payment
+        monthly_pi = calc_monthly_pmt(loan_amount, inv_params.interest_rate, 360)
+        monthly_tax = calc_price * 0.0055 / 12  # use default tax rate
+        monthly_ins = calc_price * inv_params.insurance_rate / 12
+        monthly_piti = monthly_pi + monthly_tax + monthly_ins
+
+        net_cash_flow = calc_rent - monthly_piti
+        annual_net = net_cash_flow * 12
+        cash_on_cash = (annual_net / down_payment * 100) if down_payment > 0 else 0
+        breakeven_rent = monthly_piti
+
+        with calc_col2:
+            st.markdown("##### Monthly Breakdown")
+            cf_data = {
+                "Item": [
+                    "Gross Rent",
+                    "Principal & Interest",
+                    "Property Tax",
+                    "Insurance",
+                    "Total PITI",
+                    "**Net Cash Flow**",
+                ],
+                "Monthly": [
+                    f"${calc_rent:,.0f}",
+                    f"-${monthly_pi:,.0f}",
+                    f"-${monthly_tax:,.0f}",
+                    f"-${monthly_ins:,.0f}",
+                    f"-${monthly_piti:,.0f}",
+                    f"${net_cash_flow:,.0f}",
+                ],
+                "Annual": [
+                    f"${calc_rent * 12:,.0f}",
+                    f"-${monthly_pi * 12:,.0f}",
+                    f"-${monthly_tax * 12:,.0f}",
+                    f"-${monthly_ins * 12:,.0f}",
+                    f"-${monthly_piti * 12:,.0f}",
+                    f"${annual_net:,.0f}",
+                ],
+            }
+            st.dataframe(pd.DataFrame(cf_data), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # Key metrics row
+        kcol1, kcol2, kcol3 = st.columns(3)
+        with kcol1:
+            st.metric("Down Payment Required", f"${down_payment:,.0f}")
+        with kcol2:
+            st.metric("Cash-on-Cash Return", f"{cash_on_cash:.1f}%")
+        with kcol3:
+            st.metric("Break-Even Rent", f"${breakeven_rent:,.0f}/mo")
+
+        st.markdown("---")
+
+        # Sensitivity table
+        st.markdown("#### Sensitivity Analysis")
+        st.caption("Net monthly cash flow at different interest rates and rent levels")
+
+        rate_scenarios = [
+            inv_params.interest_rate - 0.01,
+            inv_params.interest_rate,
+            inv_params.interest_rate + 0.01,
+            inv_params.interest_rate + 0.02,
+        ]
+        rent_scenarios = [
+            int(calc_rent * 0.85),
+            int(calc_rent * 0.95),
+            calc_rent,
+            int(calc_rent * 1.10),
+        ]
+
+        sensitivity_rows = []
+        for r_rate in rate_scenarios:
+            row = {"Rate": f"{r_rate * 100:.1f}%"}
+            loan_amt = calc_price * (1 - inv_params.down_pmt_pct)
+            pi = calc_monthly_pmt(loan_amt, r_rate, 360)
+            piti = pi + monthly_tax + monthly_ins
+            for rent_val in rent_scenarios:
+                ncf = rent_val - piti
+                row[f"Rent ${rent_val:,}"] = f"${ncf:,.0f}"
+            sensitivity_rows.append(row)
+
+        sens_df = pd.DataFrame(sensitivity_rows)
+        st.dataframe(sens_df, use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+
+        # Deal highlights
+        st.markdown("#### Deal Highlights")
+        st.caption("Properties flagged for strong investment signals")
+
+        scores = _compute_investment_scores(listings, inv_params)
+        median_ppsf = _median([l.price_per_sqft for l in listings if l.price_per_sqft])
+
+        highlights = []
+        for i, l in enumerate(listings):
+            flags = []
+            if median_ppsf and l.price_per_sqft and l.price_per_sqft < median_ppsf * 0.85:
+                flags.append("Below median $/sqft")
+            rm = l.rent_multiplier(inv_params.per_bed_rent)
+            median_rm = _median([l2.rent_multiplier(inv_params.per_bed_rent) for l2 in listings if l2.rent_multiplier(inv_params.per_bed_rent)])
+            if rm and median_rm and rm < median_rm * 0.85:
+                flags.append("Strong rent multiple")
+            piti_val = l.monthly_piti(inv_params)
+            rent_est = l.rent_estimate(inv_params.per_bed_rent)
+            if rent_est and rent_est > 0 and piti_val < rent_est / 12:
+                flags.append("PITI < estimated rent")
+            if flags:
+                highlights.append({
+                    "Address": l.address,
+                    "Price": f"${l.price:,}",
+                    "Score": scores[i] if i < len(scores) else "N/A",
+                    "Signals": ", ".join(flags),
+                })
+
+        if highlights:
+            st.dataframe(pd.DataFrame(highlights), use_container_width=True, hide_index=True)
+        else:
+            st.info("No standout deals found in the current results. Try broadening your search.")
+
+
+# --- Tab 6: Neighborhood Comparison (only in investment mode) ---
+if tab_neighborhood is not None:
+    with tab_neighborhood:
+        st.markdown("#### Neighborhood / Zip Code Comparison")
+        st.caption("Aggregate statistics by zip code to compare areas at a glance")
+
+        scores = _compute_investment_scores(listings, inv_params)
+
+        zip_groups: dict[str, list[tuple[Listing, float]]] = {}
+        for i, l in enumerate(listings):
+            zc = l.zip_code or "Unknown"
+            score = scores[i] if i < len(scores) else 50
+            zip_groups.setdefault(zc, []).append((l, score))
+
+        zip_rows = []
+        for zc, group in sorted(zip_groups.items()):
+            ls = [g[0] for g in group]
+            sc = [g[1] for g in group]
+            zip_rows.append({
+                "Zip Code": zc,
+                "Count": len(ls),
+                "Median Price": _median([l.price for l in ls if l.price > 0]),
+                "Median $/SqFt": _median([l.price_per_sqft for l in ls if l.price_per_sqft]),
+                "Median DOM": _median([l.days_on_market for l in ls if l.days_on_market is not None]),
+                "Avg Score": round(sum(sc) / len(sc), 1) if sc else None,
+            })
+
+        zip_df = pd.DataFrame(zip_rows)
+
+        if not zip_df.empty:
+            st.dataframe(
+                zip_df.style.format({
+                    "Median Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
+                    "Median $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
+                    "Median DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "--",
+                    "Avg Score": lambda x: f"{x:.1f}" if pd.notna(x) else "--",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("---")
+            st.markdown("#### Median Price by Zip Code")
+            chart_data = zip_df[zip_df["Median Price"].notna()][["Zip Code", "Median Price"]].copy()
+            if not chart_data.empty:
+                st.bar_chart(chart_data.set_index("Zip Code"))
+        else:
+            st.info("No zip code data available.")
