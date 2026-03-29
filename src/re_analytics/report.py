@@ -564,14 +564,9 @@ def generate_report(
     pdf.ln(3)
 
     toc_items = [
-        ("1  Market Snapshot", "Metrics, rates, price tiers, commentary"),
-        ("2  Neighborhood Profile", "Zip comparison and distributions"),
+        ("1  Market Snapshot", "Regional metrics, rates, price tiers, closed market, commentary"),
+        ("2  Neighborhood Profile", "Zip comparison, distributions, comps, area news"),
     ]
-    if target_price:
-        toc_items.append(
-            ("3  Comparable Analysis",
-             f"Comps near ${target_price:,}" + (f", {target_beds} beds" if target_beds else "")),
-        )
 
     for title, desc in toc_items:
         pdf.set_font("Helvetica", "B", 9)
@@ -594,19 +589,19 @@ def generate_report(
 
     pdf.is_cover = False
 
-    # ==================== 1. MARKET SNAPSHOT ====================
+    # ==================== 1. MARKET SNAPSHOT (Regional / Macro) ====================
     pdf.add_page()
     pdf.section_title("Market Snapshot")
 
-    # Row 1: Market metrics
+    # Row 1: Active market metrics
     pdf.metric_cards([
         ("Active Inventory", f"{len(active):,}"),
-        ("Median Price", f"${_median(price_vals):,.0f}" if price_vals else "N/A"),
+        ("Median List Price", f"${_median(price_vals):,.0f}" if price_vals else "N/A"),
         ("Median $/SqFt", f"${_median(ppsf_vals):,.0f}" if ppsf_vals else "N/A"),
         ("Median DOM", f"{_median(dom_vals):.0f} days" if dom_vals else "N/A"),
     ])
 
-    # Row 2: Rate metrics (inline, no separate section)
+    # Row 2: Rate metrics
     if rates and rates.mortgage_30yr:
         pdf.metric_cards([
             ("30-Yr Mortgage", f"{rates.mortgage_30yr:.2f}%"),
@@ -622,6 +617,68 @@ def generate_report(
                 "Mortgage-Treasury Spread",
                 f"Current spread: {spread:.2f}% ({signal}). Historical average is approx. 1.7%.",
             )
+
+    # Closed market metrics (placeholder until MLS access)
+    closed = [l for l in listings if l.sold_price and l.sold_price > 0]
+    if closed:
+        sold_prices = [l.sold_price for l in closed]
+        stl_ratios = [l.sale_to_list_ratio for l in closed if l.sale_to_list_ratio]
+        below_list = [r for r in stl_ratios if r < 1.0]
+        pct_below = f"{len(below_list) / len(stl_ratios) * 100:.0f}%" if stl_ratios else "N/A"
+        closed_dom = [l.days_on_market for l in closed if l.days_on_market is not None]
+
+        pdf.subsection_title("Closed Market (Recent Sales)")
+        pdf.metric_cards([
+            ("Closed Sales", str(len(closed))),
+            ("Med. Sold Price", f"${_median(sold_prices):,.0f}"),
+            ("% Below List", pct_below),
+            ("Med. DOM to Close", f"{_median(closed_dom):.0f}" if closed_dom else "N/A"),
+        ])
+    else:
+        pdf.subsection_title("Closed Market (Recent Sales)")
+        pdf.callout_box(
+            "MLS Data Required",
+            "Closed sale prices, sale-to-list ratios, and DOM to close require MLS API access "
+            "(UtahRealEstate RESO feed). Fields: ClosePrice, OriginalListPrice, CloseDate. "
+            "This section will populate automatically once connected.",
+        )
+
+    # Neighborhood summaries (city-level overview for macro context)
+    city_groups: dict[str, list[Listing]] = {}
+    for l in listings:
+        c = l.city or "Unknown"
+        city_groups.setdefault(c, []).append(l)
+
+    if len(city_groups) >= 1:
+        pdf.subsection_title("Neighborhood Summaries")
+        city_rows = []
+        for c in sorted(city_groups.keys()):
+            group = city_groups[c]
+            g_prices = [l.price for l in group if l.price > 0]
+            g_ppsf = [l.price_per_sqft for l in group if l.price_per_sqft]
+            g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
+            g_closed = [l for l in group if l.sold_price and l.sold_price > 0]
+            g_stl = [l.sale_to_list_ratio for l in g_closed if l.sale_to_list_ratio]
+            g_below = f"{len([r for r in g_stl if r < 1.0]) / len(g_stl) * 100:.0f}%" if g_stl else "--"
+            city_rows.append([
+                c,
+                str(len(group)),
+                f"${_median(g_prices):,.0f}" if g_prices else "-",
+                f"${_median(g_ppsf):,.0f}" if g_ppsf else "-",
+                f"{_median(g_dom):.0f}" if g_dom else "-",
+                g_below,
+            ])
+        pdf.styled_table(
+            ["City", "Listings", "Med. List", "Med. $/SqFt", "Med. DOM", "% Below List*"],
+            city_rows,
+            [32, 18, 28, 26, 20, 28],
+            ["L", "C", "R", "R", "C", "C"],
+        )
+        pdf.set_font("Helvetica", "I", 6.5)
+        pdf.set_text_color(*LIGHT_TEXT)
+        pdf.cell(0, 3, "* % Below List requires MLS closed sale data. '--' indicates data unavailable.",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
 
     # Price tier + DOM combined table
     pdf.subsection_title("Price Tiers & Days on Market")
@@ -641,7 +698,6 @@ def generate_report(
         g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
         g_ppsf = [l.price_per_sqft for l in group if l.price_per_sqft]
         g_price = [l.price for l in group if l.price > 0]
-        # DOM speed indicator
         med_d = _median(g_dom) if g_dom else None
         if med_d is not None:
             if med_d < 14:
@@ -670,7 +726,7 @@ def generate_report(
         ["L", "C", "R", "R", "C", "C"],
     )
 
-    # Market commentary (inline, no new page)
+    # Market commentary
     commentary = _build_commentary(listings, city, state, is_investment, rates)
     for title, text in commentary.items():
         if title == "Key Takeaway":
@@ -679,35 +735,37 @@ def generate_report(
             pdf.subsection_title(title)
             pdf.body_text(text)
 
-    # ==================== 2. NEIGHBORHOOD PROFILE ====================
+    # ==================== 2. NEIGHBORHOOD PROFILE (Micro / Target Area) ====================
     pdf.add_page()
     pdf.section_title("Neighborhood Profile")
 
-    # Neighborhood comparison table
+    # Zip code comparison with city
     if len(zip_groups) > 1:
         pdf.subsection_title("Zip Code Comparison")
         zip_rows = []
         for z in sorted(zip_groups.keys()):
             group = zip_groups[z]
             g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
+            # Get primary city for this zip
+            zip_city = max(set(l.city for l in group if l.city), key=lambda c: sum(1 for l in group if l.city == c)) if any(l.city for l in group) else "-"
             zip_rows.append([
                 z,
+                zip_city,
                 str(len(group)),
                 f"${_median([l.price for l in group if l.price > 0]):,.0f}"
                     if group else "-",
                 f"${_median([l.price_per_sqft for l in group if l.price_per_sqft]):,.0f}"
                     if any(l.price_per_sqft for l in group) else "-",
                 f"{_median(g_dom):.0f}" if g_dom else "-",
-                f"${min(l.price for l in group):,}-${max(l.price for l in group):,}",
             ])
         pdf.styled_table(
-            ["Zip", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM", "Price Range"],
+            ["Zip", "City", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM"],
             zip_rows,
-            [20, 16, 30, 28, 20, 48],
-            ["C", "C", "R", "R", "C", "C"],
+            [20, 28, 16, 28, 26, 20],
+            ["C", "L", "C", "R", "R", "C"],
         )
 
-    # Price distribution (compact)
+    # Price distribution
     pdf.subsection_title("Price Distribution")
     price_bands = [
         ("Under $400K", 0, 400_000),
@@ -729,21 +787,21 @@ def generate_report(
         ["L", "C", "C", "L"],
     )
 
-    # $/SqFt distribution (compact, side by side concept - just fewer bands)
+    # $/SqFt distribution
     if ppsf_vals:
         pdf.subsection_title("Price per SqFt Distribution")
         min_ppsf = int(min(ppsf_vals))
         max_ppsf = int(max(ppsf_vals))
         step = max(50, (max_ppsf - min_ppsf) // 5)
         ppsf_bands = []
-        lo = (min_ppsf // step) * step
-        while lo < max_ppsf + step:
-            hi = lo + step
-            ppsf_bands.append((f"${lo}-${hi}", lo, hi))
-            lo = hi
+        lo_b = (min_ppsf // step) * step
+        while lo_b < max_ppsf + step:
+            hi_b = lo_b + step
+            ppsf_bands.append((f"${lo_b}-${hi_b}", lo_b, hi_b))
+            lo_b = hi_b
         ppsf_rows = []
-        for label, lo, hi in ppsf_bands:
-            count = len([l for l in listings if l.price_per_sqft and lo <= l.price_per_sqft < hi])
+        for label, lo_b, hi_b in ppsf_bands:
+            count = len([l for l in listings if l.price_per_sqft and lo_b <= l.price_per_sqft < hi_b])
             if count > 0:
                 pct = f"{count / len(listings) * 100:.0f}%"
                 bar = "#" * min(int(count / max(len(listings), 1) * 25), 25)
@@ -756,12 +814,10 @@ def generate_report(
                 ["L", "C", "C", "L"],
             )
 
-    # ==================== 3. COMPARABLE ANALYSIS ====================
+    # --- Comparable Analysis (within neighborhood section) ---
     if target_price:
-        pdf.add_page()
-        pdf.section_title("Comparable Analysis")
+        pdf.subsection_title("Comparable Analysis")
 
-        # Filter comps: within +/-15% of target price, matching beds if specified
         price_lo = int(target_price * 0.85)
         price_hi = int(target_price * 1.15)
         comps = [l for l in listings if price_lo <= l.price <= price_hi]
@@ -772,59 +828,66 @@ def generate_report(
 
         pdf.callout_box(
             "Comp Criteria",
-            f"Target price: ${target_price:,} (+/-15% = ${price_lo:,} - ${price_hi:,})"
+            f"Target: ${target_price:,} (+/-15% = ${price_lo:,}-${price_hi:,})"
             + (f", {target_beds} beds (+/-1)" if target_beds else "")
             + f". Found {len(comps)} comparable properties.",
         )
 
         if comps:
-            # Where does target sit in the market?
+            # Market position
             all_prices = sorted([l.price for l in listings if l.price > 0])
             if all_prices:
                 below = len([p for p in all_prices if p <= target_price])
                 percentile = int(below / len(all_prices) * 100)
-                pdf.subsection_title("Market Position")
                 pdf.body_text(
                     f"A ${target_price:,} property sits at the {percentile}th percentile "
-                    f"of the market (out of {len(all_prices)} properties). "
-                    f"Market range: ${min(all_prices):,} - ${max(all_prices):,}, "
+                    f"of {len(all_prices)} listings. "
+                    f"Range: ${min(all_prices):,}-${max(all_prices):,}, "
                     f"median ${_median(all_prices):,.0f}."
                 )
 
-            # Comp summary stats
+            # Comp stats
             comp_prices = [l.price for l in comps]
             comp_ppsf = [l.price_per_sqft for l in comps if l.price_per_sqft]
             comp_dom = [l.days_on_market for l in comps if l.days_on_market is not None]
+            comp_sold = [l for l in comps if l.sold_price and l.sold_price > 0]
 
-            pdf.metric_cards([
+            cards = [
                 ("Comps Found", str(len(comps))),
-                ("Med. Comp Price", f"${_median(comp_prices):,.0f}" if comp_prices else "N/A"),
-                ("Med. Comp $/SqFt", f"${_median(comp_ppsf):,.0f}" if comp_ppsf else "N/A"),
-                ("Med. Comp DOM", f"{_median(comp_dom):.0f} days" if comp_dom else "N/A"),
-            ])
+                ("Med. List Price", f"${_median(comp_prices):,.0f}" if comp_prices else "N/A"),
+                ("Med. $/SqFt", f"${_median(comp_ppsf):,.0f}" if comp_ppsf else "N/A"),
+                ("Med. DOM", f"{_median(comp_dom):.0f}" if comp_dom else "N/A"),
+            ]
+            pdf.metric_cards(cards)
 
-            # Comp listings table with clickable links
-            pdf.subsection_title("Comparable Properties")
-            comp_headers = ["Address", "Price", "Beds", "SqFt", "$/SqFt", "DOM", "Zip"]
-            comp_widths = [48, 24, 14, 20, 22, 14, 20]
-            comp_aligns = ["L", "R", "C", "R", "R", "C", "C"]
+            # Comp table with list + sold price
+            comp_headers = ["Address", "List", "Sold*", "Beds", "SqFt", "$/SqFt", "DOM"]
+            comp_widths = [44, 22, 22, 12, 18, 20, 14]
+            comp_aligns = ["L", "R", "R", "C", "R", "R", "C"]
             comp_rows = []
             comp_links = []
             for l in sorted(comps, key=lambda x: abs(x.price - target_price))[:20]:
+                sold_str = f"${l.sold_price:,}" if l.sold_price else "--"
                 comp_rows.append([
-                    l.address[:26],
+                    l.address[:24],
                     f"${l.price:,}",
+                    sold_str,
                     str(l.bedrooms or "-"),
                     f"{l.sqft:,}" if l.sqft else "-",
                     f"${l.price_per_sqft:,.0f}" if l.price_per_sqft else "-",
                     f"{l.days_on_market:.0f}" if l.days_on_market else "-",
-                    l.zip_code or "-",
                 ])
                 comp_links.append(l.listing_url or "")
             pdf.styled_table_with_links(comp_headers, comp_rows, comp_links, comp_widths, comp_aligns)
 
+            pdf.set_font("Helvetica", "I", 6.5)
+            pdf.set_text_color(*LIGHT_TEXT)
+            pdf.cell(0, 3, "* Sold price requires MLS closed data. '--' indicates pending or unavailable.",
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(2)
+
             # Value assessment
-            if comp_ppsf and target_price and comps:
+            if comp_ppsf and comps:
                 avg_sqft = _median([l.sqft for l in comps if l.sqft])
                 med_comp_ppsf = _median(comp_ppsf)
                 if avg_sqft and med_comp_ppsf:
@@ -838,14 +901,24 @@ def generate_report(
                         assessment = "Right at implied market value."
                     pdf.callout_box(
                         "Value Assessment",
-                        f"Based on median comp $/sqft of ${med_comp_ppsf:,.0f} and "
-                        f"median comp size of {avg_sqft:,.0f} sqft, implied value is "
-                        f"${implied_value:,}. Target at ${target_price:,} is {assessment}",
+                        f"Median comp $/sqft: ${med_comp_ppsf:,.0f}, median comp size: "
+                        f"{avg_sqft:,.0f} sqft. Implied value: ${implied_value:,}. "
+                        f"Target at ${target_price:,} is {assessment}",
                     )
         else:
             pdf.body_text(
-                "No comparable properties found within the specified criteria. "
+                "No comparable properties found within criteria. "
                 "Consider widening the price range or adjusting bed count."
             )
+
+    # --- Recent Area News ---
+    pdf.subsection_title("Recent Area News & Developments")
+    pdf.callout_box(
+        "Coming Soon",
+        f"Recent real estate and community news for the {city} area (T12-24 months) "
+        "will be populated here. Planned sources include local MLS market reports, "
+        "municipal development announcements, zoning changes, and major employer "
+        "activity. This feature will be available in a future update.",
+    )
 
     return pdf.output()
