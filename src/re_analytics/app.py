@@ -6,8 +6,6 @@ import asyncio
 import logging
 import os
 import statistics
-from pathlib import Path
-
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -23,7 +21,7 @@ from re_analytics.models import (
 from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
 from re_analytics.cache import list_cached, load_cached_file
-from re_analytics.report import generate_report, _dynamic_buckets
+from re_analytics.report import generate_report, _dynamic_buckets, _dom_pace, _normalize_status
 from re_analytics.demo_data import DEMO_LISTINGS, DEMO_CITY, DEMO_STATE, DEMO_RATES
 
 # Load .env
@@ -249,10 +247,7 @@ def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.Dat
             "Rent Mult": l.rent_multiplier(params.per_bed_rent),
             "PITI": round(l.monthly_piti(params), 0),
             "Year Built": l.year_built,
-            "Status": "Sold" if l.sold_price and l.sold_price > 0
-                else "Active" if (l.status or "").upper().replace("_", " ") in ("ACTIVE", "FOR SALE", "")
-                else "Pending" if "PENDING" in (l.status or "").upper()
-                else (l.status or "Active"),
+            "Status": _normalize_status(l),
             "URL": l.listing_url,
             "Latitude": l.latitude,
             "Longitude": l.longitude,
@@ -566,21 +561,11 @@ with tab_market:
                 continue
             g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
             med_d = _median(g_dom) if g_dom else None
-            pace = ""
-            if med_d is not None:
-                if med_d < 14:
-                    pace = "Fast"
-                elif med_d < 30:
-                    pace = "Normal"
-                elif med_d < 60:
-                    pace = "Slow"
-                else:
-                    pace = "Stale"
             tier_rows.append({
                 "Tier": label,
                 "Count": len(group),
                 "Med. DOM": med_d,
-                "Pace": pace,
+                "Pace": _dom_pace(med_d),
                 "Med. $/SqFt": _median([l.price_per_sqft for l in group if l.price_per_sqft]),
                 "Med. Price": _median([l.price for l in group if l.price > 0]),
             })
@@ -787,15 +772,6 @@ with tab_listings:
         column_config=col_cfg,
     )
 
-    # CSV download
-    csv_data = listings_to_csv(listings, inv_params)
-    if csv_data:
-        st.download_button(
-            label="Export to CSV",
-            data=csv_data,
-            file_name=f"listings_{search_city.lower().replace(' ', '_')}_{search_state.lower()}.csv",
-            mime="text/csv",
-        )
 
 
 # --- Tab 3: Map ---

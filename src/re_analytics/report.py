@@ -32,6 +32,31 @@ def _median(values: list) -> float | None:
     return round(statistics.median(vals), 1) if vals else None
 
 
+def _dom_pace(median_dom: float | None) -> str:
+    """Categorize days-on-market into a pace label."""
+    if median_dom is None:
+        return ""
+    if median_dom < 14:
+        return "Fast"
+    if median_dom < 30:
+        return "Normal"
+    if median_dom < 60:
+        return "Slow"
+    return "Stale"
+
+
+def _normalize_status(listing) -> str:
+    """Normalize listing status to Active/Sold/Pending."""
+    if listing.sold_price and listing.sold_price > 0:
+        return "Sold"
+    raw = (listing.status or "").upper().replace("_", " ")
+    if raw in ("ACTIVE", "FOR SALE", ""):
+        return "Active"
+    if "PENDING" in raw:
+        return "Pending"
+    return listing.status or "Active"
+
+
 def _dynamic_buckets(values: list[float], num_buckets: int = 5) -> list[tuple[str, float, float]]:
     """Create clean, dynamic buckets from actual data distribution.
 
@@ -214,78 +239,15 @@ class REReport(FPDF):
         rows: list[list[str]],
         col_widths: list[float] | None = None,
         align: list[str] | None = None,
+        links: list[str] | None = None,
     ):
-        """Render a professional table with dark header and alternating rows."""
+        """Render a professional table. Optionally adds a clickable 'View' link column."""
         if not headers:
             return
         margin = 18
         available = self.w - 2 * margin
-        if col_widths is None:
-            col_widths = [available / len(headers)] * len(headers)
 
-        if align is None:
-            align = ["C"] * len(headers)
-
-        row_h = 6
-
-        # Header
-        self.set_font("Helvetica", "B", 7.5)
-        self.set_fill_color(*BG_TABLE_HEADER)
-        self.set_text_color(*WHITE)
-        self.set_draw_color(*BG_TABLE_HEADER)
-        self.set_line_width(0.1)
-        for i, h in enumerate(headers):
-            self.cell(col_widths[i], row_h + 1, h, border=0, fill=True, align="C")
-        self.ln()
-
-        # Rows
-        self.set_font("Helvetica", "", 7.5)
-        self.set_text_color(*DARK_TEXT)
-        for r_idx, row in enumerate(rows):
-            if self.get_y() > self.h - 30:
-                self.add_page()
-                # Re-draw header on new page
-                self.set_font("Helvetica", "B", 7.5)
-                self.set_fill_color(*BG_TABLE_HEADER)
-                self.set_text_color(*WHITE)
-                for i, h in enumerate(headers):
-                    self.cell(col_widths[i], row_h + 1, h, border=0, fill=True, align="C")
-                self.ln()
-                self.set_font("Helvetica", "", 7.5)
-                self.set_text_color(*DARK_TEXT)
-
-            # Alternating row background
-            if r_idx % 2 == 1:
-                self.set_fill_color(*BG_ROW_ALT)
-                fill = True
-            else:
-                self.set_fill_color(*WHITE)
-                fill = True
-
-            for i, val in enumerate(row):
-                self.cell(col_widths[i], row_h, str(val), border=0, fill=fill, align=align[i])
-            self.ln()
-
-        # Bottom border
-        self.set_draw_color(*DIVIDER)
-        self.set_line_width(0.3)
-        self.line(margin, self.get_y(), margin + sum(col_widths), self.get_y())
-        self.ln(4)
-
-    def styled_table_with_links(
-        self,
-        headers: list[str],
-        rows: list[list[str]],
-        links: list[str],
-        col_widths: list[float] | None = None,
-        align: list[str] | None = None,
-    ):
-        """Table with a clickable 'View' link column appended at the end."""
-        if not headers:
-            return
-        margin = 18
-        link_col_w = 18
-        available = self.w - 2 * margin
+        link_col_w = 18 if links else 0
         if col_widths is None:
             data_w = available - link_col_w
             col_widths = [data_w / len(headers)] * len(headers)
@@ -293,9 +255,9 @@ class REReport(FPDF):
         if align is None:
             align = ["C"] * len(headers)
 
-        all_headers = headers + ["Link"]
-        all_widths = list(col_widths) + [link_col_w]
-        all_aligns = list(align) + ["C"]
+        all_headers = headers + (["Link"] if links else [])
+        all_widths = list(col_widths) + ([link_col_w] if links else [])
+        all_aligns = list(align) + (["C"] if links else [])
 
         row_h = 6
 
@@ -320,24 +282,22 @@ class REReport(FPDF):
                 self.set_font("Helvetica", "", 7.5)
                 self.set_text_color(*DARK_TEXT)
 
-            if r_idx % 2 == 1:
-                self.set_fill_color(*BG_ROW_ALT)
-            else:
-                self.set_fill_color(*WHITE)
+            self.set_fill_color(*(BG_ROW_ALT if r_idx % 2 == 1 else WHITE))
 
             for i, val in enumerate(row):
                 self.cell(all_widths[i], row_h, str(val), border=0, fill=True, align=all_aligns[i])
 
-            # Link cell
-            url = links[r_idx] if r_idx < len(links) else ""
-            if url:
-                self.set_text_color(*BLUE)
-                self.set_font("Helvetica", "U", 7.5)
-                self.cell(link_col_w, row_h, "View", border=0, fill=True, align="C", link=url)
-                self.set_font("Helvetica", "", 7.5)
-                self.set_text_color(*DARK_TEXT)
-            else:
-                self.cell(link_col_w, row_h, "-", border=0, fill=True, align="C")
+            # Optional link cell
+            if links:
+                url = links[r_idx] if r_idx < len(links) else ""
+                if url:
+                    self.set_text_color(*BLUE)
+                    self.set_font("Helvetica", "U", 7.5)
+                    self.cell(link_col_w, row_h, "View", border=0, fill=True, align="C", link=url)
+                    self.set_font("Helvetica", "", 7.5)
+                    self.set_text_color(*DARK_TEXT)
+                else:
+                    self.cell(link_col_w, row_h, "-", border=0, fill=True, align="C")
             self.ln()
 
         self.set_draw_color(*DIVIDER)
@@ -349,21 +309,25 @@ class REReport(FPDF):
         """Render a highlighted callout box with left accent border."""
         margin = 18
         box_w = self.w - 2 * margin
+        text_w = box_w - 14
+        line_h = 4.5
+
+        # Measure actual text height using fpdf2
+        self.set_font("Helvetica", "", 8.5)
+        text_h = self.multi_cell(text_w, line_h, text, dry_run=True, output="HEIGHT")
+        box_h = max(18, 10 + text_h)
+
         x = margin
         y = self.get_y()
 
-        # Measure text height
-        self.set_font("Helvetica", "", 8.5)
-        line_h = 4.5
-        # Estimate lines
-        lines = len(text) / (box_w / 2.2) + 1
-        box_h = max(18, 8 + lines * line_h)
+        # Page break if needed
+        if y + box_h > self.h - 25:
+            self.add_page()
+            y = self.get_y()
 
-        # Background
+        # Background + left accent bar
         self.set_fill_color(*BG_LIGHT)
         self.rect(x, y, box_w, box_h, "F")
-
-        # Left accent bar
         self.set_fill_color(*ACCENT_BAR)
         self.rect(x, y, 3, box_h, "F")
 
@@ -371,13 +335,13 @@ class REReport(FPDF):
         self.set_xy(x + 7, y + 3)
         self.set_font("Helvetica", "B", 9)
         self.set_text_color(*BLUE)
-        self.cell(box_w - 14, 5, title, align="L")
+        self.cell(text_w, 5, title, align="L")
 
         # Text
         self.set_xy(x + 7, y + 9)
         self.set_font("Helvetica", "", 8.5)
         self.set_text_color(*DARK_TEXT)
-        self.multi_cell(box_w - 14, line_h, text)
+        self.multi_cell(text_w, line_h, text)
 
         self.set_y(y + box_h + 4)
 
@@ -827,18 +791,8 @@ def generate_report(
         g_ppsf = [l.price_per_sqft for l in group if l.price_per_sqft]
         g_price = [l.price for l in group if l.price > 0]
         med_d = _median(g_dom) if g_dom else None
-        if med_d is not None:
-            if med_d < 14:
-                pace = "Fast"
-            elif med_d < 30:
-                pace = "Normal"
-            elif med_d < 60:
-                pace = "Slow"
-            else:
-                pace = "Stale"
-            dom_str = f"{med_d:.0f} ({pace})"
-        else:
-            dom_str = "-"
+        pace = _dom_pace(med_d)
+        dom_str = f"{med_d:.0f} ({pace})" if med_d is not None else "-"
         tier_rows.append([
             label,
             str(len(group)),
@@ -988,16 +942,7 @@ def generate_report(
 
             for l in sorted(comps, key=_comp_sort_key)[:20]:
                 sold_str = f"${l.sold_price:,}" if l.sold_price else "--"
-                # Determine status label
-                raw = (l.status or "").upper().replace("_", " ")
-                if l.sold_price and l.sold_price > 0:
-                    status = "Sold"
-                elif raw in ("ACTIVE", "FOR SALE"):
-                    status = "Active"
-                elif "PENDING" in raw:
-                    status = "Pending"
-                else:
-                    status = "Active"
+                status = _normalize_status(l)
                 comp_rows.append([
                     status,
                     l.address[:22],
@@ -1009,7 +954,7 @@ def generate_report(
                     f"{l.days_on_market:.0f}" if l.days_on_market else "-",
                 ])
                 comp_links.append(l.listing_url or "")
-            pdf.styled_table_with_links(comp_headers, comp_rows, comp_links, comp_widths, comp_aligns)
+            pdf.styled_table(comp_headers, comp_rows, comp_widths, comp_aligns, links=comp_links)
 
             # Counts by status
             n_sold = sum(1 for r in comp_rows if r[0] == "Sold")
