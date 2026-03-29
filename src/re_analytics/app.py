@@ -22,6 +22,8 @@ from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
 from re_analytics.cache import list_cached, load_cached_file
 from re_analytics.report import generate_report, _dynamic_buckets, _dom_pace, _normalize_status
+from re_analytics.rates import fetch_appreciation_fred
+from re_analytics.research import fetch_area_news
 from re_analytics.demo_data import DEMO_LISTINGS, DEMO_CITY, DEMO_STATE, DEMO_RATES
 
 # Load .env
@@ -368,6 +370,10 @@ if "search_city" not in st.session_state:
     st.session_state.search_city = ""
 if "search_state" not in st.session_state:
     st.session_state.search_state = ""
+if "appreciation" not in st.session_state:
+    st.session_state.appreciation = None
+if "area_news" not in st.session_state:
+    st.session_state.area_news = None
 
 if search_clicked:
     criteria = SearchCriteria(
@@ -391,6 +397,12 @@ if search_clicked:
         fred_key = os.environ.get("FRED_API_KEY")
         rates = _run_async(get_current_rates(fred_key))
         st.session_state.rates = rates
+        # Fetch appreciation data
+        st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+
+    # Fetch area news (non-blocking, best effort)
+    with st.spinner("Researching area news..."):
+        st.session_state.area_news = _run_async(fetch_area_news(city, state.upper()))
 
     if not results:
         st.warning("No listings found. Try broadening your search criteria.")
@@ -489,6 +501,8 @@ with actions_col:
             rates=st.session_state.rates,
             target_price=target_price,
             target_beds=target_beds,
+            appreciation=st.session_state.appreciation,
+            area_news=st.session_state.area_news,
         ))
         st.download_button(
             "PDF Report",

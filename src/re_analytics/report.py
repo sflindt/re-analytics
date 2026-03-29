@@ -484,6 +484,8 @@ def generate_report(
     rates: RateSnapshot | None = None,
     target_price: int | None = None,
     target_beds: int | None = None,
+    appreciation: dict | None = None,
+    area_news: str | None = None,
 ) -> bytes:
     """Generate a professional PDF report."""
 
@@ -717,6 +719,30 @@ def generate_report(
                 f"Current spread: {spread:.2f}% ({signal}). Historical average is approx. 1.7%.",
             )
 
+    # Home price appreciation
+    if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
+        yoy = appreciation.get("yoy_pct")
+        fiveyr = appreciation.get("five_yr_pct")
+        appr_cards = []
+        if yoy is not None:
+            appr_cards.append(("1-Year HPI Change", f"{yoy:+.1f}%"))
+        if fiveyr is not None:
+            appr_cards.append(("5-Year HPI Change", f"{fiveyr:+.1f}%"))
+        # Annualized 5yr
+        if fiveyr is not None:
+            annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100
+            appr_cards.append(("5-Yr Annualized", f"{annualized:+.1f}%"))
+        appr_cards.append(("Source", "FHFA HPI"))
+        pdf.subsection_title("Home Price Appreciation (Metro)")
+        pdf.metric_cards(appr_cards)
+    else:
+        pdf.subsection_title("Home Price Appreciation")
+        pdf.callout_box(
+            "Data Pending",
+            "Home price appreciation data (FHFA House Price Index) requires a FRED API key. "
+            "Once configured, 1-year and 5-year metro-level appreciation will display here.",
+        )
+
     # Closed market metrics (placeholder until MLS access)
     closed = [l for l in listings if l.sold_price and l.sold_price > 0]
     if closed:
@@ -820,6 +846,28 @@ def generate_report(
     # ==================== 2. NEIGHBORHOOD PROFILE (Micro / Target Area) ====================
     pdf.add_page()
     pdf.section_title("Neighborhood Profile")
+
+    # Growth context at top of neighborhood section
+    if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
+        yoy = appreciation.get("yoy_pct")
+        fiveyr = appreciation.get("five_yr_pct")
+        parts = []
+        if yoy is not None:
+            direction = "up" if yoy > 0 else "down"
+            parts.append(f"home prices are {direction} {abs(yoy):.1f}% year-over-year")
+        if fiveyr is not None:
+            parts.append(f"{fiveyr:+.1f}% over 5 years")
+        growth_text = (
+            f"In the {city} metro area, {' and '.join(parts)} "
+            f"(FHFA House Price Index). "
+        )
+        if yoy and yoy > 5:
+            growth_text += "Strong appreciation suggests a competitive market for buyers."
+        elif yoy and yoy > 0:
+            growth_text += "Moderate, healthy growth indicates a stable market."
+        elif yoy and yoy <= 0:
+            growth_text += "Flat or declining prices may create buying opportunities."
+        pdf.callout_box("Growth Trend", growth_text)
 
     # Zip code comparison with city
     if len(zip_groups) > 1:
@@ -1004,12 +1052,15 @@ def generate_report(
 
     # --- Recent Area News ---
     pdf.subsection_title("Recent Area News & Developments")
-    pdf.callout_box(
-        "Coming Soon",
-        f"Recent real estate and community news for the {city} area (T12-24 months) "
-        "will be populated here. Planned sources include local MLS market reports, "
-        "municipal development announcements, zoning changes, and major employer "
-        "activity. This feature will be available in a future update.",
-    )
+    if area_news:
+        pdf.body_text(area_news)
+    else:
+        pdf.callout_box(
+            "News Unavailable",
+            f"Area news for {city}, {state} requires an Anthropic API key (ANTHROPIC_API_KEY). "
+            "When configured, this section auto-populates with recent (T12-24mo) real estate "
+            "and community developments: zoning changes, employer activity, infrastructure, "
+            "and demographic trends.",
+        )
 
     return pdf.output()
