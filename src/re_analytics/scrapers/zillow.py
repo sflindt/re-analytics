@@ -332,12 +332,26 @@ class ZillowScraper(BaseScraper):
                     logger.warning(f"Zillow search failed on page {page}: {e}")
                 break
 
-            # Use mapResults (all listings up to 500) on first page,
-            # listResults for pagination
-            results = data.get("mapResults", []) if page == 1 else data.get("listResults", [])
+            # Log top-level keys for debugging response structure
+            logger.debug(f"Zillow response keys: {list(data.keys())}")
 
-            if self.debug:
-                logger.debug(f"Zillow page {page}: {len(results)} results")
+            # Zillow nests results under cat1.searchResults or at top level
+            # Try nested structure first (cat1.searchResults.mapResults)
+            search_results = (
+                data.get("cat1", {}).get("searchResults", {})
+                or data.get("searchResults", {})
+                or data
+            )
+            if page == 1:
+                results = search_results.get("mapResults", []) or search_results.get("listResults", [])
+            else:
+                results = search_results.get("listResults", [])
+
+            # Fallback: try top-level keys
+            if not results:
+                results = data.get("mapResults", []) or data.get("listResults", [])
+
+            logger.debug(f"Zillow page {page}: {len(results)} results")
 
             if not results:
                 break
