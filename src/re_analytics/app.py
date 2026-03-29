@@ -679,7 +679,7 @@ with tab_market:
                 template=PLOTLY_TEMPLATE, height=320, margin=dict(l=40, r=40, t=30, b=60),
                 yaxis=dict(title="Listings", showgrid=True, gridcolor="#f0f0f0"),
                 yaxis2=dict(title="Days on Market", overlaying="y", side="right",
-                            showgrid=False, titlefont_color=ACCENT_ORANGE),
+                            showgrid=False, title=dict(font=dict(color=ACCENT_ORANGE))),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 showlegend=True, bargap=0.3,
             )
