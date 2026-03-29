@@ -65,15 +65,27 @@ st.markdown("""
         color: #212529 !important;
     }
 
-    /* Sidebar styling */
+    /* Sidebar styling — white text on dark background */
     [data-testid="stSidebar"] {
         background-color: #1a1a2e;
     }
+    [data-testid="stSidebar"] * {
+        color: #e0e0e0 !important;
+    }
+    [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] .stMarkdown h1,
     [data-testid="stSidebar"] .stMarkdown h2,
     [data-testid="stSidebar"] .stMarkdown h3,
-    [data-testid="stSidebar"] .stMarkdown p {
-        color: #e0e0e0;
+    [data-testid="stSidebar"] .stMarkdown p,
+    [data-testid="stSidebar"] .stMarkdown strong,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] .stCaption {
+        color: #e0e0e0 !important;
+    }
+    [data-testid="stSidebar"] input,
+    [data-testid="stSidebar"] select,
+    [data-testid="stSidebar"] [data-baseweb="select"] {
+        color: #212529 !important;
     }
 
     /* Tab styling */
@@ -367,9 +379,20 @@ with tab_market:
 
     with col_right:
         st.markdown("#### Price Distribution")
-        price_data = pd.DataFrame({"Price": [l.price for l in listings if l.price > 0]})
-        if not price_data.empty:
-            st.bar_chart(price_data["Price"].value_counts(bins=15).sort_index())
+        prices = [l.price for l in listings if l.price > 0]
+        if prices:
+            # Create readable price buckets (e.g. "$500K", "$600K")
+            bucket_size = max(50_000, round((max(prices) - min(prices)) / 12 / 50_000) * 50_000) or 100_000
+            price_buckets = {}
+            for p in prices:
+                bucket = (p // bucket_size) * bucket_size
+                if bucket >= 1_000_000:
+                    label = f"${bucket / 1_000_000:.1f}M"
+                else:
+                    label = f"${int(bucket / 1000)}K"
+                price_buckets[label] = price_buckets.get(label, 0) + 1
+            chart_df = pd.DataFrame({"Price Range": list(price_buckets.keys()), "Count": list(price_buckets.values())})
+            st.bar_chart(chart_df.set_index("Price Range"))
 
     st.markdown("---")
 
@@ -380,8 +403,15 @@ with tab_market:
         st.markdown("#### $/SqFt Distribution")
         ppsf_data = [l.price_per_sqft for l in listings if l.price_per_sqft]
         if ppsf_data:
-            ppsf_df = pd.DataFrame({"$/SqFt": ppsf_data})
-            st.bar_chart(ppsf_df["$/SqFt"].value_counts(bins=15).sort_index())
+            # Create readable $/sqft buckets (e.g. "$200", "$250")
+            bucket_size = max(25, round((max(ppsf_data) - min(ppsf_data)) / 10 / 25) * 25) or 50
+            ppsf_buckets = {}
+            for v in ppsf_data:
+                bucket = int((v // bucket_size) * bucket_size)
+                label = f"${bucket}"
+                ppsf_buckets[label] = ppsf_buckets.get(label, 0) + 1
+            ppsf_chart = pd.DataFrame({"$/SqFt Range": list(ppsf_buckets.keys()), "Count": list(ppsf_buckets.values())})
+            st.bar_chart(ppsf_chart.set_index("$/SqFt Range"))
         else:
             st.info("No square footage data available.")
 
@@ -424,18 +454,19 @@ with tab_listings:
         )
 
     st.dataframe(
-        display_df.style.format({
-            "Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "—",
-            "$/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) and x else "—",
-            "DOM": lambda x: f"{x:.0f}" if pd.notna(x) and x else "—",
-            "Rent Mult": lambda x: f"{x:,.0f}" if pd.notna(x) and x else "—",
-            "PITI": lambda x: f"${x:,.0f}" if pd.notna(x) else "—",
-        }),
+        display_df,
         use_container_width=True,
         hide_index=True,
         height=600,
         column_config={
             "URL": st.column_config.LinkColumn("Listing", display_text="View"),
+            "Price": st.column_config.NumberColumn("Price", format="$%d"),
+            "$/SqFt": st.column_config.NumberColumn("$/SqFt", format="$%d"),
+            "DOM": st.column_config.NumberColumn("DOM", format="%d"),
+            "Rent Mult": st.column_config.NumberColumn("Rent Mult", format="%d"),
+            "PITI": st.column_config.NumberColumn("PITI", format="$%d"),
+            "Latitude": None,
+            "Longitude": None,
         },
     )
 
@@ -597,3 +628,21 @@ with tab_rates:
         st.markdown(
             "Rate data is limited. Check back after running a search to see the full rate analysis."
         )
+
+    st.markdown("---")
+
+    st.markdown("#### Data Sources")
+    st.markdown(
+        "- **30-Year Fixed Mortgage Rate** — [Freddie Mac PMMS](https://www.freddiemac.com/pmms) "
+        "via [FRED Series MORTGAGE30US](https://fred.stlouisfed.org/series/MORTGAGE30US)\n"
+        "- **15-Year Fixed Mortgage Rate** — [Freddie Mac PMMS](https://www.freddiemac.com/pmms) "
+        "via [FRED Series MORTGAGE15US](https://fred.stlouisfed.org/series/MORTGAGE15US)\n"
+        "- **Federal Funds Rate** — [Federal Reserve](https://www.federalreserve.gov/monetarypolicy/openmarket.htm) "
+        "via [FRED Series FEDFUNDS](https://fred.stlouisfed.org/series/FEDFUNDS)\n"
+        "- **10-Year Treasury Yield** — [U.S. Treasury](https://home.treasury.gov/resource-center/data-chart-center/interest-rates) "
+        "via [FRED Series GS10](https://fred.stlouisfed.org/series/GS10)"
+    )
+    st.caption(
+        "Rate data is sourced from the Federal Reserve Economic Data (FRED) API maintained by the "
+        "Federal Reserve Bank of St. Louis. Updated weekly (mortgage rates) and monthly (Fed funds)."
+    )
