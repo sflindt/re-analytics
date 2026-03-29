@@ -363,7 +363,7 @@ class REReport(FPDF):
             self.add_page()
         x = (self.w - width) / 2  # Center the chart
         self.image(chart_buf, x=x, y=self.get_y(), w=width)
-        self.set_y(self.get_y() + height + 2)
+        self.set_y(self.get_y() + height + 6)
         if caption:
             self.set_font("Helvetica", "I", 6)
             self.set_text_color(*LIGHT_TEXT)

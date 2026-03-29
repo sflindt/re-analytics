@@ -677,7 +677,7 @@ with tab_market:
                 ))
             fig_tiers.update_layout(
                 template=PLOTLY_TEMPLATE, height=320, margin=dict(l=40, r=40, t=30, b=60),
-                yaxis=dict(title="Listings", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis=dict(title="# of Listings (Active)", showgrid=True, gridcolor="#f0f0f0"),
                 yaxis2=dict(title=dict(text="Days on Market", font=dict(color=ACCENT_ORANGE)),
                             overlaying="y", side="right", showgrid=False),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -702,7 +702,7 @@ with tab_market:
             ))
             fig_price.update_layout(
                 template=PLOTLY_TEMPLATE, height=320, margin=dict(l=40, r=20, t=20, b=80),
-                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis=dict(title="# of Listings (Active)", showgrid=True, gridcolor="#f0f0f0"),
                 xaxis=dict(tickangle=-35),
                 showlegend=False,
             )
@@ -730,7 +730,7 @@ with tab_market:
             ))
             fig_ppsf.update_layout(
                 template=PLOTLY_TEMPLATE, height=280, margin=dict(l=40, r=20, t=20, b=80),
-                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis=dict(title="# of Listings (Active)", showgrid=True, gridcolor="#f0f0f0"),
                 xaxis=dict(tickangle=-35), showlegend=False,
             )
             st.plotly_chart(fig_ppsf, use_container_width=True)
@@ -753,7 +753,7 @@ with tab_market:
             ))
             fig_beds.update_layout(
                 template=PLOTLY_TEMPLATE, height=280, margin=dict(l=40, r=20, t=20, b=40),
-                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis=dict(title="# of Listings (Active)", showgrid=True, gridcolor="#f0f0f0"),
                 showlegend=False,
             )
             st.plotly_chart(fig_beds, use_container_width=True)

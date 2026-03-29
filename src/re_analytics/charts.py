@@ -49,11 +49,20 @@ def _setup_style():
     })
 
 
+def _compact_price(x, _=None) -> str:
+    """Format price as compact string: $1.3M, $450K, etc."""
+    if x >= 1_000_000:
+        return f"${x / 1_000_000:.1f}M"
+    elif x >= 1_000:
+        return f"${x / 1_000:.0f}K"
+    return f"${x:,.0f}"
+
+
 def _fig_to_bytes(fig) -> io.BytesIO:
     """Render figure to PNG BytesIO buffer."""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=CHART_DPI, bbox_inches="tight",
-                facecolor="white", edgecolor="none", pad_inches=0.1)
+                facecolor="white", edgecolor="none", pad_inches=0.15)
     plt.close(fig)
     buf.seek(0)
     return buf
@@ -102,7 +111,7 @@ def chart_distribution(
 
     ax.set_xticks(range(len(labels)))
     ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=6)
-    ax.set_ylabel("Count", fontsize=7)
+    ax.set_ylabel("# of Listings (Active)", fontsize=7)
     ax.set_title(title, fontsize=TITLE_SIZE, color=NAVY, pad=8)
     ax.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
 
@@ -132,7 +141,7 @@ def chart_price_tiers(
     # Bars for count
     bars = ax1.bar(x, counts, color=BLUE, edgecolor="white", linewidth=0.5,
                    width=0.6, label="Listings", zorder=2)
-    ax1.set_ylabel("Listings", color=BLUE, fontsize=7)
+    ax1.set_ylabel("# of Listings (Active)", color=BLUE, fontsize=7)
     ax1.set_xticks(x)
     ax1.set_xticklabels(labels, rotation=30, ha="right", fontsize=6)
     ax1.yaxis.set_major_locator(mticker.MaxNLocator(integer=True))
@@ -185,14 +194,15 @@ def chart_zip_comparison(
     ax.set_yticks(range(len(labels)))
     ax.set_yticklabels(labels, fontsize=6)
     ax.set_xlabel("Median Price", fontsize=7)
-    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(_compact_price))
+    ax.tick_params(axis="x", labelsize=6)
     ax.set_title("Median Price by Zip Code", fontsize=TITLE_SIZE, color=NAVY, pad=8)
 
-    # Price labels on bars
+    # Compact price labels on bars
     for bar, price in zip(bars, prices):
         ax.text(bar.get_width() + max(prices) * 0.01,
                 bar.get_y() + bar.get_height() / 2,
-                f"${price:,.0f}", ha="left", va="center", fontsize=6, color=DARK_TEXT)
+                _compact_price(price), ha="left", va="center", fontsize=6, color=DARK_TEXT)
 
     return _fig_to_bytes(fig)
 
@@ -248,7 +258,7 @@ def chart_comp_scatter(
 
     ax.set_xlabel("Square Feet", fontsize=7)
     ax.set_ylabel("Price", fontsize=7)
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_compact_price))
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
     ax.set_title("Comparable Properties: Price vs Size", fontsize=TITLE_SIZE, color=NAVY, pad=8)
     ax.legend(fontsize=6, loc="upper left", framealpha=0.8)
