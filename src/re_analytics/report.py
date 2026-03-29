@@ -795,6 +795,23 @@ def generate_report(
         if spread:
             pdf.horizontal_gauge("Mtg-Treasury Spread", spread, 1.0, 3.5, color=ACCENT_GREEN if spread <= 2.0 else ACCENT_BAR)
 
+        # Layman footnotes for rate indicators
+        pdf.ln(3)
+        pdf.set_font("Helvetica", "I", 6.5)
+        pdf.set_text_color(*LIGHT_TEXT)
+        footnotes = [
+            "30yr Mortgage: The interest rate on a standard 30-year home loan. "
+            "This directly determines your monthly payment -- lower is better for buyers.",
+            "Fed Funds Rate: The rate set by the Federal Reserve that influences all other rates. "
+            "When the Fed cuts this rate, mortgage rates tend to follow down over time.",
+            "Mtg-Treasury Spread: The gap between mortgage rates and the 10-year Treasury bond. "
+            "A narrower spread (closer to 1.5-2.0%) means lenders are pricing mortgages competitively; "
+            "a wider spread (above 2.5%) suggests room for mortgage rates to drop even without Fed action.",
+        ]
+        for fn in footnotes:
+            pdf.multi_cell(0, 3, fn, new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+
     # Home price appreciation
     if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
         yoy = appreciation.get("yoy_pct")

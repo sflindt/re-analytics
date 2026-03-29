@@ -1074,6 +1074,17 @@ with tab_rates:
                     unsafe_allow_html=True,
                 )
 
+            # Layman footnotes
+            st.caption(
+                "**30yr Mortgage** -- The interest rate on a standard 30-year home loan. "
+                "This directly determines your monthly payment; lower is better for buyers.  \n"
+                "**Fed Funds Rate** -- The rate set by the Federal Reserve that influences all other rates. "
+                "When the Fed cuts this rate, mortgage rates tend to follow down over time.  \n"
+                "**Mtg-Treasury Spread** -- The gap between mortgage rates and the 10-year Treasury bond. "
+                "A narrower spread (1.5-2.0%) means competitive pricing; a wider spread (above 2.5%) "
+                "suggests room for mortgage rates to drop even without Fed action."
+            )
+
     with col_right:
         st.markdown("#### Payment Scenarios")
         st.caption("Monthly P&I on a 30-year fixed mortgage")
