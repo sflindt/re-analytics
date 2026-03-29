@@ -488,6 +488,7 @@ def generate_report(
     area_news: str | None = None,
     zip_appreciation: dict | None = None,
     population: dict | None = None,
+    market_commentary: str | None = None,
 ) -> bytes:
     """Generate a professional PDF report."""
 
@@ -836,14 +837,20 @@ def generate_report(
         ["L", "C", "R", "R", "C", "C"],
     )
 
-    # Market commentary
-    commentary = _build_commentary(listings, city, state, is_investment, rates)
-    for title, text in commentary.items():
-        if title == "Key Takeaway":
-            pdf.callout_box(title, text)
-        else:
-            pdf.subsection_title(title)
-            pdf.body_text(text)
+    # Market commentary — LLM-powered when available, static fallback
+    if market_commentary:
+        pdf.subsection_title("Market Commentary")
+        # LLM output may use **bold** markdown headers — render as plain text
+        clean_text = market_commentary.replace("**", "")
+        pdf.body_text(clean_text)
+    else:
+        commentary = _build_commentary(listings, city, state, is_investment, rates)
+        for title, text in commentary.items():
+            if title == "Key Takeaway":
+                pdf.callout_box(title, text)
+            else:
+                pdf.subsection_title(title)
+                pdf.body_text(text)
 
     # ==================== 2. NEIGHBORHOOD PROFILE (Micro / Target Area) ====================
     pdf.add_page()
