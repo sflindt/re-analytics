@@ -24,6 +24,7 @@ from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
 from re_analytics.cache import list_cached, load_cached_file
 from re_analytics.report import generate_report
+from re_analytics.demo_data import DEMO_LISTINGS, DEMO_CITY, DEMO_STATE, DEMO_RATES
 
 # Load .env
 from dotenv import load_dotenv
@@ -311,13 +312,14 @@ with st.sidebar:
     st.markdown("---")
     search_clicked = st.button("Search Properties", type="primary", use_container_width=True)
 
-    # --- Load previous results ---
+    # --- Load previous / demo ---
+    st.markdown("---")
+
     cached_searches = list_cached()
     if cached_searches:
-        st.markdown("---")
         with st.expander("Load Previous Results"):
             cache_options = {
-                f"{c['city']}, {c['state']} — {c['count']} listings ({c['age_hours']:.0f}h ago)": c["file"]
+                f"{c['city']}, {c['state']} - {c['count']} listings ({c['age_hours']:.0f}h ago)": c["file"]
                 for c in cached_searches[:10]
             }
             selected_cache = st.selectbox(
@@ -329,17 +331,22 @@ with st.sidebar:
                 fname = cache_options[selected_cache]
                 cached_listings = load_cached_file(fname)
                 if cached_listings:
-                    # Extract city/state from cache metadata
                     meta = next((c for c in cached_searches if c["file"] == fname), {})
                     st.session_state.listings = cached_listings
                     st.session_state.search_city = meta.get("city", city)
                     st.session_state.search_state = meta.get("state", state).upper()
-                    # Also load rates
                     fred_key = os.environ.get("FRED_API_KEY")
                     st.session_state.rates = _run_async(get_current_rates(fred_key))
                     st.rerun()
                 else:
                     st.error("Failed to load cached results.")
+
+    if st.button("Demo Mode", use_container_width=True, key="demo_btn"):
+        st.session_state.listings = sorted(DEMO_LISTINGS, key=lambda l: l.price)
+        st.session_state.search_city = DEMO_CITY
+        st.session_state.search_state = DEMO_STATE
+        st.session_state.rates = DEMO_RATES
+        st.rerun()
 
 # --- State management ---
 
@@ -425,7 +432,17 @@ if not listings:
         )
 
     st.markdown("---")
-    st.info("Configure your search in the sidebar and click **Search Properties** to get started.")
+
+    col_start, col_demo = st.columns([2, 1])
+    with col_start:
+        st.info("Configure your search in the sidebar and click **Search Properties** to get started.")
+    with col_demo:
+        if st.button("Try Demo Mode", type="secondary", use_container_width=True, key="landing_demo"):
+            st.session_state.listings = sorted(DEMO_LISTINGS, key=lambda l: l.price)
+            st.session_state.search_city = DEMO_CITY
+            st.session_state.search_state = DEMO_STATE
+            st.session_state.rates = DEMO_RATES
+            st.rerun()
     st.stop()
 
 
@@ -456,11 +473,11 @@ with actions_col:
     # PDF + CSV downloads
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
-        pdf_bytes = generate_report(
+        pdf_bytes = bytes(generate_report(
             listings, inv_params, search_city, search_state,
             is_investment=is_investment,
             rates=st.session_state.rates,
-        )
+        ))
         st.download_button(
             "PDF Report",
             data=pdf_bytes,
