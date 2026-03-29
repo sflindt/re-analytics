@@ -897,16 +897,33 @@ def generate_report(
             ]
             pdf.metric_cards(cards)
 
-            # Comp table with list + sold price
-            comp_headers = ["Address", "List", "Sold*", "Beds", "SqFt", "$/SqFt", "DOM"]
-            comp_widths = [44, 22, 22, 12, 18, 20, 14]
-            comp_aligns = ["L", "R", "R", "C", "R", "R", "C"]
+            # Comp table with status, list + sold price
+            comp_headers = ["Status", "Address", "List", "Sold*", "Beds", "SqFt", "$/SqFt", "DOM"]
+            comp_widths = [16, 38, 20, 20, 12, 16, 18, 12]
+            comp_aligns = ["C", "L", "R", "R", "C", "R", "R", "C"]
             comp_rows = []
             comp_links = []
-            for l in sorted(comps, key=lambda x: abs(x.price - target_price))[:20]:
+
+            # Sort: sold first (most useful for comps), then active, by price proximity
+            def _comp_sort_key(l):
+                is_sold = 0 if (l.sold_price and l.sold_price > 0) else 1
+                return (is_sold, abs(l.price - target_price))
+
+            for l in sorted(comps, key=_comp_sort_key)[:20]:
                 sold_str = f"${l.sold_price:,}" if l.sold_price else "--"
+                # Determine status label
+                raw = (l.status or "").upper().replace("_", " ")
+                if l.sold_price and l.sold_price > 0:
+                    status = "Sold"
+                elif raw in ("ACTIVE", "FOR SALE"):
+                    status = "Active"
+                elif "PENDING" in raw:
+                    status = "Pending"
+                else:
+                    status = "Active"
                 comp_rows.append([
-                    l.address[:24],
+                    status,
+                    l.address[:22],
                     f"${l.price:,}",
                     sold_str,
                     str(l.bedrooms or "-"),
@@ -917,10 +934,25 @@ def generate_report(
                 comp_links.append(l.listing_url or "")
             pdf.styled_table_with_links(comp_headers, comp_rows, comp_links, comp_widths, comp_aligns)
 
+            # Counts by status
+            n_sold = sum(1 for r in comp_rows if r[0] == "Sold")
+            n_active = sum(1 for r in comp_rows if r[0] == "Active")
+            n_pending = sum(1 for r in comp_rows if r[0] == "Pending")
+            status_parts = []
+            if n_sold:
+                status_parts.append(f"{n_sold} sold")
+            if n_active:
+                status_parts.append(f"{n_active} active")
+            if n_pending:
+                status_parts.append(f"{n_pending} pending")
+            status_summary = ", ".join(status_parts) if status_parts else ""
+
             pdf.set_font("Helvetica", "I", 6.5)
             pdf.set_text_color(*LIGHT_TEXT)
-            pdf.cell(0, 3, "* Sold price requires MLS closed data. '--' indicates pending or unavailable.",
-                     new_x="LMARGIN", new_y="NEXT")
+            footnote = "* Sold price requires MLS closed data. '--' = pending or unavailable."
+            if status_summary:
+                footnote += f"  ({status_summary})"
+            pdf.cell(0, 3, footnote, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(2)
 
             # Value assessment
