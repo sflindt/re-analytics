@@ -9,6 +9,9 @@ import statistics
 import numpy as np
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import pydeck as pdk
 
 from re_analytics.models import (
     InvestmentParams,
@@ -41,38 +44,57 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- Custom CSS for professional look ---
+# --- Brand constants ---
+NAVY = "#1B2A4A"
+BLUE = "#2E5090"
+LIGHT_BLUE = "#4A90D9"
+ACCENT_GREEN = "#27AE60"
+ACCENT_RED = "#C0392B"
+ACCENT_ORANGE = "#E67E22"
+BG_LIGHT = "#F5F6F8"
+MID_GRAY = "#BDC3C7"
+DARK_TEXT = "#2C3E50"
+
+PLOTLY_TEMPLATE = "plotly_white"
+PLOTLY_COLORS = [BLUE, ACCENT_GREEN, ACCENT_ORANGE, LIGHT_BLUE, ACCENT_RED, "#8E44AD"]
+
+# --- Custom CSS for McKinsey-style professional look ---
 st.markdown("""
 <style>
-    /* Clean header styling */
+    /* Page layout */
     .main .block-container {
-        padding-top: 2rem;
+        padding-top: 1.5rem;
         max-width: 1200px;
     }
 
-    /* Metric cards */
+    /* Metric cards — elevated, navy accent */
     [data-testid="stMetric"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        border-radius: 8px;
-        padding: 12px 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fb 100%);
+        border: 1px solid #e2e6ea;
+        border-left: 4px solid #1B2A4A;
+        border-radius: 6px;
+        padding: 14px 18px;
+        box-shadow: 0 2px 8px rgba(27,42,74,0.06);
     }
     [data-testid="stMetricLabel"] {
-        font-size: 0.8rem !important;
+        font-size: 0.72rem !important;
         color: #6c757d !important;
         text-transform: uppercase;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.08em;
+        font-weight: 500 !important;
     }
     [data-testid="stMetricValue"] {
-        font-size: 1.4rem !important;
-        font-weight: 600 !important;
-        color: #212529 !important;
+        font-size: 1.5rem !important;
+        font-weight: 700 !important;
+        color: #1B2A4A !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-size: 0.75rem !important;
     }
 
-    /* Sidebar styling — white text on dark background */
+    /* Sidebar — dark navy */
     [data-testid="stSidebar"] {
-        background-color: #1a1a2e;
+        background-color: #1B2A4A;
     }
     [data-testid="stSidebar"] * {
         color: #e0e0e0 !important;
@@ -93,52 +115,72 @@ st.markdown("""
         color: #212529 !important;
     }
 
-    /* Tab styling */
+    /* Tabs — clean, consulting-style */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 2px;
-        border-bottom: 2px solid #e9ecef;
+        gap: 0;
+        border-bottom: 2px solid #1B2A4A;
+        background-color: transparent;
     }
     .stTabs [data-baseweb="tab"] {
-        padding: 8px 20px;
-        border-radius: 4px 4px 0 0;
+        padding: 10px 24px;
+        border-radius: 0;
+        font-weight: 500;
+        font-size: 0.85rem;
+        letter-spacing: 0.02em;
+    }
+    .stTabs [aria-selected="true"] {
+        border-bottom: 3px solid #2E5090 !important;
+        font-weight: 600;
     }
 
-    /* Table styling */
+    /* Tables */
     [data-testid="stDataFrame"] {
-        border-radius: 8px;
+        border-radius: 6px;
         overflow: hidden;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
 
-    /* Clean dividers */
+    /* Dividers */
     hr {
         border: none;
-        border-top: 1px solid #e9ecef;
+        border-top: 1px solid #e2e6ea;
         margin: 1.5rem 0;
-    }
-
-    /* Deal highlight cards */
-    .metric-good [data-testid="stMetric"] {
-        border-left: 4px solid #28a745;
-    }
-    .metric-warn [data-testid="stMetric"] {
-        border-left: 4px solid #ffc107;
-    }
-    .metric-bad [data-testid="stMetric"] {
-        border-left: 4px solid #dc3545;
     }
 
     /* Header brand */
     .brand-header {
-        font-size: 1.6rem;
-        font-weight: 700;
-        color: #1a1a2e;
+        font-size: 1.8rem;
+        font-weight: 800;
+        color: #1B2A4A;
         margin-bottom: 0;
-        letter-spacing: -0.02em;
+        letter-spacing: -0.03em;
     }
     .brand-subtitle {
         font-size: 0.9rem;
         color: #6c757d;
-        margin-top: 0;
+        margin-top: 4px;
+    }
+
+    /* Section headers */
+    h4 {
+        color: #1B2A4A !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.01em;
+        border-bottom: 2px solid #2E5090;
+        padding-bottom: 6px;
+        margin-bottom: 16px !important;
+    }
+
+    /* Insight boxes */
+    .insight-box {
+        background: linear-gradient(135deg, #f0f4f8 0%, #e8ecf1 100%);
+        border-left: 4px solid #2E5090;
+        border-radius: 4px;
+        padding: 12px 16px;
+        margin: 12px 0;
+        font-size: 0.88rem;
+        color: #2C3E50;
+        line-height: 1.5;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -579,14 +621,13 @@ with tab_market:
     active = [l for l in listings if l.status in ("Active", "FOR_SALE", None)]
     sold = [l for l in listings if l.status in ("Sold", "RECENTLY_SOLD")]
 
-    # KPI metrics row
-    col1, col2, col3, col4, col5 = st.columns(5)
-
     dom_vals = [l.days_on_market for l in active if l.days_on_market is not None]
     ppsf_vals = [l.price_per_sqft for l in active if l.price_per_sqft is not None]
     price_vals = [l.price for l in active if l.price > 0]
     stl_vals = [l.sale_to_list_ratio for l in sold if l.sale_to_list_ratio is not None]
 
+    # KPI metrics row
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("Active Inventory", f"{len(active):,}")
     with col2:
@@ -600,55 +641,76 @@ with tab_market:
 
     st.markdown("---")
 
-    # Two-column layout: price tier table + chart
+    # Two-column: price tiers combo chart + price distribution
     col_left, col_right = st.columns([1.2, 1])
 
     with col_left:
-        st.markdown("#### Price Tier Breakdown")
+        st.markdown("#### Price Tiers & Market Pace")
         tier_buckets = _dynamic_buckets(price_vals, num_buckets=5)
-        tier_rows = []
+        tier_labels, tier_counts, tier_doms = [], [], []
         for label, lo, hi in tier_buckets:
             group = [l for l in listings if lo <= l.price < hi]
             if not group:
                 continue
             g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
-            med_d = _median(g_dom) if g_dom else None
-            tier_rows.append({
-                "Tier": label,
-                "Count": len(group),
-                "Med. DOM": med_d,
-                "Pace": _dom_pace(med_d),
-                "Med. $/SqFt": _median([l.price_per_sqft for l in group if l.price_per_sqft]),
-                "Med. Price": _median([l.price for l in group if l.price > 0]),
-            })
+            tier_labels.append(label)
+            tier_counts.append(len(group))
+            tier_doms.append(_median(g_dom) if g_dom else None)
 
-        tier_df = pd.DataFrame(tier_rows)
-        st.dataframe(
-            tier_df.style.format({
-                "Med. DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "-",
-                "Med. $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
-                "Med. Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
-            }),
-            use_container_width=True,
-            hide_index=True,
-        )
+        if tier_labels:
+            fig_tiers = go.Figure()
+            fig_tiers.add_trace(go.Bar(
+                x=tier_labels, y=tier_counts, name="Listings",
+                marker_color=BLUE, yaxis="y", opacity=0.85,
+                text=tier_counts, textposition="outside", textfont_size=10,
+            ))
+            valid_doms = [(i, d) for i, d in enumerate(tier_doms) if d is not None]
+            if valid_doms:
+                fig_tiers.add_trace(go.Scatter(
+                    x=[tier_labels[i] for i, _ in valid_doms],
+                    y=[d for _, d in valid_doms],
+                    name="Med. DOM", mode="lines+markers+text",
+                    line=dict(color=ACCENT_ORANGE, width=2.5),
+                    marker=dict(size=8), yaxis="y2",
+                    text=[f"{d:.0f}d" for _, d in valid_doms],
+                    textposition="top center", textfont_size=9,
+                ))
+            fig_tiers.update_layout(
+                template=PLOTLY_TEMPLATE, height=320, margin=dict(l=40, r=40, t=30, b=60),
+                yaxis=dict(title="Listings", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis2=dict(title="Days on Market", overlaying="y", side="right",
+                            showgrid=False, titlefont_color=ACCENT_ORANGE),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                showlegend=True, bargap=0.3,
+            )
+            st.plotly_chart(fig_tiers, use_container_width=True)
 
     with col_right:
         st.markdown("#### Price Distribution")
         prices = [l.price for l in listings if l.price > 0]
         if prices:
             p_buckets = _dynamic_buckets(prices, num_buckets=6)
-            price_buckets = {}
+            p_labels, p_counts = [], []
             for label, lo, hi in p_buckets:
                 count = len([p for p in prices if lo <= p < hi])
                 if count > 0:
-                    price_buckets[label] = count
-            chart_df = pd.DataFrame({"Price Range": list(price_buckets.keys()), "Count": list(price_buckets.values())})
-            st.bar_chart(chart_df.set_index("Price Range"))
+                    p_labels.append(label)
+                    p_counts.append(count)
+            fig_price = go.Figure(go.Bar(
+                x=p_labels, y=p_counts, marker_color=BLUE, opacity=0.85,
+                text=[f"{c}" for c in p_counts], textposition="outside", textfont_size=10,
+            ))
+            fig_price.update_layout(
+                template=PLOTLY_TEMPLATE, height=320, margin=dict(l=40, r=20, t=20, b=80),
+                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                xaxis=dict(tickangle=-35),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_price, use_container_width=True)
 
     st.markdown("---")
 
-    # Second row: $/sqft distribution + beds breakdown
+    # Second row: $/sqft + bedrooms
     col_left2, col_right2 = st.columns(2)
 
     with col_left2:
@@ -656,13 +718,22 @@ with tab_market:
         ppsf_data = [l.price_per_sqft for l in listings if l.price_per_sqft]
         if ppsf_data:
             ppsf_b = _dynamic_buckets(ppsf_data, num_buckets=6)
-            ppsf_buckets = {}
+            ppsf_labels, ppsf_counts = [], []
             for label, lo, hi in ppsf_b:
                 count = len([v for v in ppsf_data if lo <= v < hi])
                 if count > 0:
-                    ppsf_buckets[label] = count
-            ppsf_chart = pd.DataFrame({"$/SqFt Range": list(ppsf_buckets.keys()), "Count": list(ppsf_buckets.values())})
-            st.bar_chart(ppsf_chart.set_index("$/SqFt Range"))
+                    ppsf_labels.append(label)
+                    ppsf_counts.append(count)
+            fig_ppsf = go.Figure(go.Bar(
+                x=ppsf_labels, y=ppsf_counts, marker_color=ACCENT_GREEN, opacity=0.85,
+                text=ppsf_counts, textposition="outside", textfont_size=10,
+            ))
+            fig_ppsf.update_layout(
+                template=PLOTLY_TEMPLATE, height=280, margin=dict(l=40, r=20, t=20, b=80),
+                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                xaxis=dict(tickangle=-35), showlegend=False,
+            )
+            st.plotly_chart(fig_ppsf, use_container_width=True)
         else:
             st.info("No square footage data available.")
 
@@ -673,16 +744,28 @@ with tab_market:
             key = f"{l.bedrooms} bed" if l.bedrooms else "Unknown"
             bed_counts[key] = bed_counts.get(key, 0) + 1
         if bed_counts:
-            bed_df = pd.DataFrame(
-                {"Bedrooms": list(bed_counts.keys()), "Count": list(bed_counts.values())}
-            ).sort_values("Bedrooms")
-            st.bar_chart(bed_df.set_index("Bedrooms"))
+            bed_sorted = sorted(bed_counts.items())
+            fig_beds = go.Figure(go.Bar(
+                x=[b[0] for b in bed_sorted],
+                y=[b[1] for b in bed_sorted],
+                marker_color=LIGHT_BLUE, opacity=0.85,
+                text=[b[1] for b in bed_sorted], textposition="outside", textfont_size=10,
+            ))
+            fig_beds.update_layout(
+                template=PLOTLY_TEMPLATE, height=280, margin=dict(l=40, r=20, t=20, b=40),
+                yaxis=dict(title="Count", showgrid=True, gridcolor="#f0f0f0"),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_beds, use_container_width=True)
 
     # LLM-powered market commentary
     if st.session_state.market_commentary:
         st.markdown("---")
         st.markdown("#### Market Commentary")
-        st.markdown(st.session_state.market_commentary)
+        st.markdown(
+            f'<div class="insight-box">{st.session_state.market_commentary}</div>',
+            unsafe_allow_html=True,
+        )
         st.caption("Generated by AI based on current listing data and market indicators")
 
 
@@ -833,24 +916,85 @@ with tab_listings:
 
 
 
-# --- Tab 3: Map ---
+# --- Tab 3: Interactive Map ---
 with tab_map:
-    map_data = [
-        {"lat": l.latitude, "lon": l.longitude, "address": l.address, "price": l.price}
-        for l in listings
-        if l.latitude and l.longitude
-    ]
+    map_data = []
+    for l in listings:
+        if l.latitude and l.longitude:
+            status = _normalize_status(l)
+            map_data.append({
+                "lat": l.latitude,
+                "lon": l.longitude,
+                "address": l.address,
+                "price": l.price,
+                "price_str": f"${l.price:,}",
+                "beds": l.bedrooms or 0,
+                "sqft": l.sqft or 0,
+                "dom": l.days_on_market if l.days_on_market is not None else -1,
+                "status": status,
+                "url": l.listing_url or "",
+                "ppsf": f"${l.price_per_sqft:,.0f}" if l.price_per_sqft else "N/A",
+                # Color by status
+                "color_r": 39 if status == "Active" else (46 if status == "Sold" else 230),
+                "color_g": 174 if status == "Active" else (204 if status == "Sold" else 126),
+                "color_b": 96 if status == "Active" else (113 if status == "Sold" else 34),
+            })
 
     if map_data:
-        col1, col2 = st.columns([3, 1])
+        map_df = pd.DataFrame(map_data)
+        center_lat = map_df["lat"].mean()
+        center_lon = map_df["lon"].mean()
+
+        # Pydeck interactive map with tooltips
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=map_df,
+            get_position=["lon", "lat"],
+            get_radius=150,
+            get_fill_color=["color_r", "color_g", "color_b", 200],
+            pickable=True,
+            auto_highlight=True,
+        )
+        tooltip = {
+            "html": (
+                "<div style='font-family:sans-serif;padding:8px;max-width:280px'>"
+                "<b style='font-size:13px'>{address}</b><br/>"
+                "<span style='font-size:18px;font-weight:700;color:#1B2A4A'>{price_str}</span>"
+                "<span style='margin-left:8px;font-size:11px;color:#666'>{ppsf}/sqft</span><br/>"
+                "<span style='font-size:11px'>{beds} bed | {sqft} sqft | {status}</span><br/>"
+                "<a href='{url}' target='_blank' style='font-size:11px;color:#2E5090'>View Listing →</a>"
+                "</div>"
+            ),
+            "style": {
+                "backgroundColor": "white",
+                "color": "#2C3E50",
+                "border": "1px solid #e2e6ea",
+                "border-radius": "6px",
+                "box-shadow": "0 4px 12px rgba(0,0,0,0.15)",
+            },
+        }
+        view = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=11, pitch=0)
+        deck = pdk.Deck(layers=[layer], initial_view_state=view, tooltip=tooltip,
+                        map_style="mapbox://styles/mapbox/light-v10")
+
+        col1, col2 = st.columns([3.5, 1])
         with col1:
-            map_df = pd.DataFrame(map_data)
-            st.map(map_df, latitude="lat", longitude="lon", size=20)
+            st.pydeck_chart(deck)
         with col2:
             st.metric("Mapped", f"{len(map_data)}")
             st.metric("Total", f"{len(listings)}")
             coverage = len(map_data) / len(listings) * 100 if listings else 0
             st.metric("Coverage", f"{coverage:.0f}%")
+            st.markdown("---")
+            # Legend
+            st.markdown(
+                '<div style="font-size:0.8rem">'
+                '<span style="color:#27AE60">●</span> Active &nbsp;'
+                '<span style="color:#2ECC71">●</span> Sold &nbsp;'
+                '<span style="color:#E67E22">●</span> Pending'
+                '</div>',
+                unsafe_allow_html=True,
+            )
     else:
         st.info("No listings with coordinates available for mapping.")
 
@@ -881,33 +1025,54 @@ with tab_rates:
     col_left, col_right = st.columns(2)
 
     with col_left:
-        st.markdown("#### Rate Analysis")
+        st.markdown("#### Rate Positioning")
+        # Visual rate gauge chart
+        if rates.mortgage_30yr:
+            rate_data = []
+            rate_colors = []
+            if rates.fed_funds_rate:
+                rate_data.append(("Fed Funds", rates.fed_funds_rate, 0, 6))
+                rate_colors.append(NAVY)
+            if rates.treasury_10yr:
+                rate_data.append(("10yr Treasury", rates.treasury_10yr, 1, 6))
+                rate_colors.append(LIGHT_BLUE)
+            rate_data.append(("30yr Mortgage", rates.mortgage_30yr, 3, 9))
+            rate_colors.append(BLUE)
+            if rates.mortgage_15yr:
+                rate_data.append(("15yr Mortgage", rates.mortgage_15yr, 2.5, 8))
+                rate_colors.append(ACCENT_GREEN)
 
-        spread = rates.spread_over_treasury
-        direction = rates.rate_direction
+            fig_rates = go.Figure()
+            for i, (label, val, lo, hi) in enumerate(rate_data):
+                # Background track
+                fig_rates.add_trace(go.Bar(
+                    y=[label], x=[hi - lo], base=[lo], orientation="h",
+                    marker_color="#e8ecf1", showlegend=False, hoverinfo="skip",
+                ))
+                # Filled portion
+                fig_rates.add_trace(go.Bar(
+                    y=[label], x=[val - lo], base=[lo], orientation="h",
+                    marker_color=rate_colors[i], showlegend=False,
+                    text=[f"{val:.2f}%"], textposition="outside",
+                    textfont=dict(size=11, color=DARK_TEXT),
+                    hovertemplate=f"{label}: {val:.2f}%<extra></extra>",
+                ))
+            fig_rates.update_layout(
+                template=PLOTLY_TEMPLATE, height=200, barmode="overlay",
+                margin=dict(l=100, r=60, t=10, b=20),
+                xaxis=dict(title="Rate %", showgrid=True, gridcolor="#f0f0f0"),
+                yaxis=dict(autorange="reversed"),
+            )
+            st.plotly_chart(fig_rates, use_container_width=True)
 
-        analysis_data = {
-            "Metric": [
-                "Mortgage-Treasury Spread",
-                "Rate Environment",
-                "Historical Avg Spread",
-            ],
-            "Value": [
-                f"{spread:.2f}%" if spread else "N/A",
-                direction,
-                "1.5% - 2.0%",
-            ],
-            "Signal": [
-                "Wide (rates may compress)" if spread and spread > 2.0
-                else "Normal" if spread and spread <= 2.0
-                else "N/A",
-                "Rates likely peaked" if direction == "Restrictive"
-                else "Watch for cuts" if direction == "Moderately Restrictive"
-                else direction,
-                "Benchmark",
-            ],
-        }
-        st.dataframe(pd.DataFrame(analysis_data), use_container_width=True, hide_index=True)
+            spread = rates.spread_over_treasury
+            if spread:
+                signal = "Wide -- rates may compress" if spread > 2.0 else "Near historical norms"
+                st.markdown(
+                    f'<div class="insight-box"><b>Mortgage-Treasury Spread:</b> {spread:.2f}% '
+                    f'(historical avg ~1.7%). {signal}.</div>',
+                    unsafe_allow_html=True,
+                )
 
     with col_right:
         st.markdown("#### Payment Scenarios")
@@ -1100,19 +1265,35 @@ if tab_invest is not None:
             int(calc_rent * 1.10),
         ]
 
-        sensitivity_rows = []
+        # Build sensitivity matrix for heatmap
+        rate_labels = [f"{r * 100:.1f}%" for r in rate_scenarios]
+        rent_labels = [f"${r:,}" for r in rent_scenarios]
+        z_values = []
         for r_rate in rate_scenarios:
-            row = {"Rate": f"{r_rate * 100:.1f}%"}
             loan_amt = calc_price * (1 - inv_params.down_pmt_pct)
             pi = calc_monthly_pmt(loan_amt, r_rate, 360)
             piti = pi + monthly_tax + monthly_ins
-            for rent_val in rent_scenarios:
-                ncf = rent_val - piti
-                row[f"Rent ${rent_val:,}"] = f"${ncf:,.0f}"
-            sensitivity_rows.append(row)
+            row_vals = [rent_val - piti for rent_val in rent_scenarios]
+            z_values.append(row_vals)
 
-        sens_df = pd.DataFrame(sensitivity_rows)
-        st.dataframe(sens_df, use_container_width=True, hide_index=True)
+        fig_sens = go.Figure(data=go.Heatmap(
+            z=z_values,
+            x=rent_labels,
+            y=rate_labels,
+            text=[[f"${v:,.0f}" for v in row] for row in z_values],
+            texttemplate="%{text}",
+            textfont_size=11,
+            colorscale=[[0, ACCENT_RED], [0.5, "#FFF8E1"], [1, ACCENT_GREEN]],
+            zmid=0,
+            hovertemplate="Rate: %{y}<br>Rent: %{x}<br>Cash Flow: $%{z:,.0f}<extra></extra>",
+        ))
+        fig_sens.update_layout(
+            template=PLOTLY_TEMPLATE, height=260,
+            margin=dict(l=60, r=20, t=10, b=40),
+            xaxis=dict(title="Monthly Rent", side="bottom"),
+            yaxis=dict(title="Interest Rate", autorange="reversed"),
+        )
+        st.plotly_chart(fig_sens, use_container_width=True)
 
         st.markdown("---")
 
