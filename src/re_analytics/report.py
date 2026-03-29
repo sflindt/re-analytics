@@ -10,6 +10,13 @@ from fpdf import FPDF
 
 from re_analytics.models import InvestmentParams, Listing
 from re_analytics.rates import RateSnapshot
+from re_analytics.charts import (
+    chart_distribution,
+    chart_price_tiers,
+    chart_zip_comparison,
+    chart_comp_scatter,
+    chart_appreciation,
+)
 
 # Brand colors
 NAVY = (26, 26, 46)
@@ -344,6 +351,72 @@ class REReport(FPDF):
         self.multi_cell(text_w, line_h, text)
 
         self.set_y(y + box_h + 4)
+
+    def embed_chart(self, chart_buf, width: float = 170, caption: str = ""):
+        """Embed a matplotlib chart (BytesIO PNG) into the PDF."""
+        if chart_buf is None or chart_buf.getvalue() == b"":
+            return
+        # Estimate height from aspect ratio (default ~0.45 ratio)
+        height = width * 0.45
+        # Page break safety
+        if self.get_y() + height + 10 > self.h - 25:
+            self.add_page()
+        x = (self.w - width) / 2  # Center the chart
+        self.image(chart_buf, x=x, y=self.get_y(), w=width)
+        self.set_y(self.get_y() + height + 2)
+        if caption:
+            self.set_font("Helvetica", "I", 6)
+            self.set_text_color(*LIGHT_TEXT)
+            self.cell(0, 3, caption, new_x="LMARGIN", new_y="NEXT", align="C")
+            self.ln(2)
+
+    def horizontal_gauge(self, label: str, value: float, lo: float, hi: float,
+                         color: tuple = BLUE, width: float = 120):
+        """Draw a horizontal gauge bar showing where a value sits in a range."""
+        if self.get_y() + 18 > self.h - 25:
+            self.add_page()
+        x_start = self.l_margin + 35
+        y = self.get_y()
+        bar_h = 6
+
+        # Label
+        self.set_font("Helvetica", "B", 7.5)
+        self.set_text_color(*DARK_TEXT)
+        self.set_xy(self.l_margin, y + 1)
+        self.cell(33, bar_h, label, new_x="RIGHT")
+
+        # Track background
+        self.set_fill_color(230, 230, 230)
+        self.rect(x_start, y + 1, width, bar_h, "F")
+
+        # Fill to value position
+        pct = max(0, min(1, (value - lo) / (hi - lo))) if hi > lo else 0.5
+        fill_w = width * pct
+        self.set_fill_color(*color)
+        self.rect(x_start, y + 1, fill_w, bar_h, "F")
+
+        # Value marker (small triangle)
+        marker_x = x_start + fill_w
+        self.set_fill_color(*NAVY)
+        # Draw a small inverted triangle
+        self.polygon(
+            [(marker_x - 2, y), (marker_x + 2, y), (marker_x, y + 1)],
+            style="F",
+        )
+
+        # Value text
+        self.set_font("Helvetica", "B", 7)
+        self.set_text_color(*color)
+        self.set_xy(x_start + width + 3, y + 1)
+        self.cell(25, bar_h, f"{value:.2f}%")
+
+        # Min/max labels
+        self.set_font("Helvetica", "", 5.5)
+        self.set_text_color(*LIGHT_TEXT)
+        self.text(x_start, y + bar_h + 5, f"{lo:.1f}%")
+        self.text(x_start + width - 8, y + bar_h + 5, f"{hi:.1f}%")
+
+        self.set_y(y + bar_h + 8)
 
 
 # ---- Commentary logic ----
@@ -714,30 +787,22 @@ def generate_report(
             ("10-Yr Treasury", f"{rates.treasury_10yr:.2f}%" if rates.treasury_10yr else "N/A"),
         ])
 
+        # Visual rate gauge
+        pdf.horizontal_gauge("30yr Mortgage", rates.mortgage_30yr, 3.0, 9.0, color=BLUE)
+        if rates.fed_funds_rate:
+            pdf.horizontal_gauge("Fed Funds", rates.fed_funds_rate, 0.0, 6.0, color=NAVY)
         spread = rates.spread_over_treasury
         if spread:
-            signal = "wider than historical avg - rates may compress" if spread > 2.0 else "near historical norms"
-            pdf.callout_box(
-                "Mortgage-Treasury Spread",
-                f"Current spread: {spread:.2f}% ({signal}). Historical average is approx. 1.7%.",
-            )
+            pdf.horizontal_gauge("Mtg-Treasury Spread", spread, 1.0, 3.5, color=ACCENT_GREEN if spread <= 2.0 else ACCENT_BAR)
 
     # Home price appreciation
     if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
         yoy = appreciation.get("yoy_pct")
         fiveyr = appreciation.get("five_yr_pct")
-        appr_cards = []
-        if yoy is not None:
-            appr_cards.append(("1-Year HPI Change", f"{yoy:+.1f}%"))
-        if fiveyr is not None:
-            appr_cards.append(("5-Year HPI Change", f"{fiveyr:+.1f}%"))
-        # Annualized 5yr
-        if fiveyr is not None:
-            annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100
-            appr_cards.append(("5-Yr Annualized", f"{annualized:+.1f}%"))
-        appr_cards.append(("Source", "FHFA HPI"))
+        annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100 if fiveyr is not None else None
         pdf.subsection_title("Home Price Appreciation (Metro)")
-        pdf.metric_cards(appr_cards)
+        appre_buf = chart_appreciation(yoy, fiveyr, annualized)
+        pdf.embed_chart(appre_buf, width=100, caption="Source: FHFA House Price Index")
     else:
         pdf.subsection_title("Home Price Appreciation")
         pdf.callout_box(
@@ -808,34 +873,25 @@ def generate_report(
                  new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
-    # Price tier + DOM combined table (dynamic buckets)
+    # Price tier + DOM chart (dynamic buckets)
     pdf.subsection_title("Price Tiers & Days on Market")
     tiers = _dynamic_buckets(price_vals, num_buckets=5)
-    tier_rows = []
+    tier_chart_data = []
     for label, lo, hi in tiers:
         group = [l for l in listings if lo <= l.price < hi]
         if not group:
             continue
         g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
         g_ppsf = [l.price_per_sqft for l in group if l.price_per_sqft]
-        g_price = [l.price for l in group if l.price > 0]
-        med_d = _median(g_dom) if g_dom else None
-        pace = _dom_pace(med_d)
-        dom_str = f"{med_d:.0f} ({pace})" if med_d is not None else "-"
-        tier_rows.append([
-            label,
-            str(len(group)),
-            f"${_median(g_price):,.0f}" if g_price else "-",
-            f"${_median(g_ppsf):,.0f}" if g_ppsf else "-",
-            dom_str,
-            f"{len(group) / len(listings) * 100:.0f}%" if listings else "-",
-        ])
-    pdf.styled_table(
-        ["Price Tier", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM", "Share"],
-        tier_rows,
-        [30, 16, 30, 28, 32, 18],
-        ["L", "C", "R", "R", "C", "C"],
-    )
+        tier_chart_data.append({
+            "label": label,
+            "count": len(group),
+            "median_dom": _median(g_dom) if g_dom else None,
+            "median_ppsf": _median(g_ppsf) if g_ppsf else None,
+        })
+    if tier_chart_data:
+        tiers_buf = chart_price_tiers(tier_chart_data)
+        pdf.embed_chart(tiers_buf, width=160)
 
     # Market commentary — LLM-powered when available, static fallback
     if market_commentary:
@@ -898,22 +954,26 @@ def generate_report(
                 growth_text += "Flat or declining prices may create buying opportunities."
         pdf.callout_box("Growth Trend", growth_text)
 
-    # Zip code comparison with city and appreciation
+    # Zip code comparison — chart + table
     if len(zip_groups) > 1:
         pdf.subsection_title("Zip Code Comparison")
         has_zip_appre = bool(zip_appreciation)
+
+        # Build data for chart and table
+        zip_chart_data = []
         zip_rows = []
         for z in sorted(zip_groups.keys()):
             group = zip_groups[z]
             g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
-            # Get primary city for this zip
             zip_city = max(set(l.city for l in group if l.city), key=lambda c: sum(1 for l in group if l.city == c)) if any(l.city for l in group) else "-"
+            med_price = _median([l.price for l in group if l.price > 0]) if group else 0
+            zip_chart_data.append({
+                "zip": z, "city": zip_city,
+                "median_price": med_price, "count": len(group),
+            })
             row = [
-                z,
-                zip_city,
-                str(len(group)),
-                f"${_median([l.price for l in group if l.price > 0]):,.0f}"
-                    if group else "-",
+                z, zip_city, str(len(group)),
+                f"${med_price:,.0f}" if med_price else "-",
                 f"${_median([l.price_per_sqft for l in group if l.price_per_sqft]):,.0f}"
                     if any(l.price_per_sqft for l in group) else "-",
                 f"{_median(g_dom):.0f}" if g_dom else "-",
@@ -924,6 +984,11 @@ def generate_report(
                 row.append(f"{yoy:+.1f}%" if yoy is not None else "--")
             zip_rows.append(row)
 
+        # Chart first, then compact table
+        if len(zip_chart_data) >= 2:
+            zip_buf = chart_zip_comparison(zip_chart_data)
+            pdf.embed_chart(zip_buf, width=150)
+
         headers = ["Zip", "City", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM"]
         widths = [18, 26, 14, 26, 24, 18]
         aligns = ["C", "L", "C", "R", "R", "C"]
@@ -933,40 +998,24 @@ def generate_report(
             aligns.append("C")
         pdf.styled_table(headers, zip_rows, widths, aligns)
 
-    # Price distribution (dynamic buckets)
-    pdf.subsection_title("Price Distribution")
-    price_bands = _dynamic_buckets(price_vals, num_buckets=5)
-    dist_rows = []
-    for label, lo, hi in price_bands:
-        count = len([l for l in listings if lo <= l.price < hi])
-        pct = f"{count / len(listings) * 100:.0f}%" if listings else "0%"
-        bar = "#" * min(int(count / max(len(listings), 1) * 25), 25)
-        dist_rows.append([label, str(count), pct, bar])
-    pdf.styled_table(
-        ["Price Band", "Count", "Share", ""],
-        dist_rows,
-        [30, 16, 16, 100],
-        ["L", "C", "C", "L"],
-    )
+    # Price distribution chart (replaces "#" bar table)
+    if price_vals:
+        price_bands = _dynamic_buckets(price_vals, num_buckets=6)
+        price_buf = chart_distribution(
+            price_bands, [l.price for l in listings if l.price > 0],
+            xlabel="Price Range", title="Price Distribution",
+        )
+        pdf.embed_chart(price_buf, width=155)
 
-    # $/SqFt distribution (dynamic buckets)
+    # $/SqFt distribution chart
     if ppsf_vals:
-        pdf.subsection_title("Price per SqFt Distribution")
-        ppsf_bands = _dynamic_buckets(ppsf_vals, num_buckets=5)
-        ppsf_rows = []
-        for label, lo_b, hi_b in ppsf_bands:
-            count = len([l for l in listings if l.price_per_sqft and lo_b <= l.price_per_sqft < hi_b])
-            if count > 0:
-                pct = f"{count / len(listings) * 100:.0f}%"
-                bar = "#" * min(int(count / max(len(listings), 1) * 25), 25)
-                ppsf_rows.append([label, str(count), pct, bar])
-        if ppsf_rows:
-            pdf.styled_table(
-                ["$/SqFt Range", "Count", "Share", ""],
-                ppsf_rows,
-                [30, 16, 16, 100],
-                ["L", "C", "C", "L"],
-            )
+        ppsf_bands = _dynamic_buckets(ppsf_vals, num_buckets=6)
+        ppsf_buf = chart_distribution(
+            ppsf_bands, ppsf_vals,
+            xlabel="$/SqFt Range", title="Price per SqFt Distribution",
+            color="#27AE60",
+        )
+        pdf.embed_chart(ppsf_buf, width=155)
 
     # --- Comparable Analysis (within neighborhood section) ---
     if target_price:
@@ -1013,6 +1062,15 @@ def generate_report(
                 ("Med. DOM", f"{_median(comp_dom):.0f}" if comp_dom else "N/A"),
             ]
             pdf.metric_cards(cards)
+
+            # Scatter plot: price vs sqft
+            scatter_data = [{
+                "sqft": l.sqft, "price": l.price,
+                "status": _normalize_status(l), "address": l.address,
+            } for l in comps if l.sqft and l.price]
+            if len(scatter_data) >= 2:
+                scatter_buf = chart_comp_scatter(scatter_data, target_price)
+                pdf.embed_chart(scatter_buf, width=155)
 
             # Comp table with status, list + sold price
             comp_headers = ["Status", "Address", "List", "Sold*", "Beds", "SqFt", "$/SqFt", "DOM"]
