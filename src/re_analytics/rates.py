@@ -126,6 +126,60 @@ def get_fallback_rates() -> RateSnapshot:
     )
 
 
+async def fetch_appreciation_fred(api_key: str | None = None) -> dict:
+    """Fetch FHFA House Price Index for SLC metro from FRED.
+
+    Series: ATNHPIUS41620Q  (All-Transactions HPI, SLC MSA, quarterly)
+    Returns dict with 'yoy_pct' and 'five_yr_pct' appreciation.
+    """
+    series_id = "ATNHPIUS41620Q"
+    result: dict[str, float | None] = {"yoy_pct": None, "five_yr_pct": None, "values": []}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            params = {
+                "series_id": series_id,
+                "sort_order": "desc",
+                "limit": "25",  # ~6 years of quarterly data
+                "file_type": "json",
+            }
+            if api_key:
+                params["api_key"] = api_key
+
+            resp = await client.get(FRED_API_URL, params=params)
+            if resp.status_code != 200:
+                return result
+
+            data = resp.json()
+            observations = data.get("observations", [])
+            values = []
+            for obs in observations:
+                val = obs.get("value", ".")
+                if val != ".":
+                    values.append({"date": obs.get("date"), "value": float(val)})
+
+            if len(values) >= 5:
+                # YoY: latest vs ~4 quarters ago
+                latest = values[0]["value"]
+                yoy_ref = values[4]["value"]  # ~1 year back
+                if yoy_ref > 0:
+                    result["yoy_pct"] = round((latest - yoy_ref) / yoy_ref * 100, 1)
+
+            if len(values) >= 21:
+                # 5-year: latest vs ~20 quarters ago
+                latest = values[0]["value"]
+                fiveyr_ref = values[20]["value"]
+                if fiveyr_ref > 0:
+                    result["five_yr_pct"] = round((latest - fiveyr_ref) / fiveyr_ref * 100, 1)
+
+            result["values"] = values[:8]  # Keep last 2 years for display
+
+    except Exception as e:
+        logger.debug(f"FHFA HPI fetch failed: {e}")
+
+    return result
+
+
 async def get_current_rates(fred_api_key: str | None = None) -> RateSnapshot:
     """Get current rates, falling back to defaults if API fails."""
     try:

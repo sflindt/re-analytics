@@ -470,6 +470,18 @@ with actions_col:
         insurance_rate=insurance_rate,
     )
 
+    # Report target price for comp analysis
+    med_p = _median([l.price for l in listings if l.price > 0])
+    with st.expander("Report Options"):
+        target_price = st.number_input(
+            "Target Price (for comps)",
+            value=int(med_p) if med_p else 500_000,
+            step=25_000, format="%d", key="report_target",
+        )
+        target_beds = st.number_input(
+            "Target Beds", value=4, min_value=1, max_value=10, key="report_beds",
+        )
+
     # PDF + CSV downloads
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
@@ -477,6 +489,8 @@ with actions_col:
             listings, inv_params, search_city, search_state,
             is_investment=is_investment,
             rates=st.session_state.rates,
+            target_price=target_price,
+            target_beds=target_beds,
         ))
         st.download_button(
             "PDF Report",
