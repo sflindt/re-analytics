@@ -214,6 +214,79 @@ class REReport(FPDF):
         self.line(margin, self.get_y(), margin + sum(col_widths), self.get_y())
         self.ln(4)
 
+    def styled_table_with_links(
+        self,
+        headers: list[str],
+        rows: list[list[str]],
+        links: list[str],
+        col_widths: list[float] | None = None,
+        align: list[str] | None = None,
+    ):
+        """Table with a clickable 'View' link column appended at the end."""
+        if not headers:
+            return
+        margin = 18
+        link_col_w = 18
+        available = self.w - 2 * margin
+        if col_widths is None:
+            data_w = available - link_col_w
+            col_widths = [data_w / len(headers)] * len(headers)
+
+        if align is None:
+            align = ["C"] * len(headers)
+
+        all_headers = headers + ["Link"]
+        all_widths = list(col_widths) + [link_col_w]
+        all_aligns = list(align) + ["C"]
+
+        row_h = 6
+
+        def _draw_header():
+            self.set_font("Helvetica", "B", 7.5)
+            self.set_fill_color(*BG_TABLE_HEADER)
+            self.set_text_color(*WHITE)
+            self.set_draw_color(*BG_TABLE_HEADER)
+            self.set_line_width(0.1)
+            for i, h in enumerate(all_headers):
+                self.cell(all_widths[i], row_h + 1, h, border=0, fill=True, align="C")
+            self.ln()
+
+        _draw_header()
+
+        self.set_font("Helvetica", "", 7.5)
+        self.set_text_color(*DARK_TEXT)
+        for r_idx, row in enumerate(rows):
+            if self.get_y() > self.h - 30:
+                self.add_page()
+                _draw_header()
+                self.set_font("Helvetica", "", 7.5)
+                self.set_text_color(*DARK_TEXT)
+
+            if r_idx % 2 == 1:
+                self.set_fill_color(*BG_ROW_ALT)
+            else:
+                self.set_fill_color(*WHITE)
+
+            for i, val in enumerate(row):
+                self.cell(all_widths[i], row_h, str(val), border=0, fill=True, align=all_aligns[i])
+
+            # Link cell
+            url = links[r_idx] if r_idx < len(links) else ""
+            if url:
+                self.set_text_color(*BLUE)
+                self.set_font("Helvetica", "U", 7.5)
+                self.cell(link_col_w, row_h, "View", border=0, fill=True, align="C", link=url)
+                self.set_font("Helvetica", "", 7.5)
+                self.set_text_color(*DARK_TEXT)
+            else:
+                self.cell(link_col_w, row_h, "-", border=0, fill=True, align="C")
+            self.ln()
+
+        self.set_draw_color(*DIVIDER)
+        self.set_line_width(0.3)
+        self.line(margin, self.get_y(), margin + sum(all_widths), self.get_y())
+        self.ln(4)
+
     def callout_box(self, title: str, text: str):
         """Render a highlighted callout box with left accent border."""
         margin = 18
@@ -482,6 +555,37 @@ def generate_report(
 
     pdf.is_cover = False
 
+    # ==================== TABLE OF CONTENTS ====================
+    pdf.add_page()
+    pdf.section_title("Contents")
+    pdf.ln(4)
+
+    toc_items = [
+        ("1", "Market Overview", "Key statistics, price tiers, and inventory snapshot"),
+        ("2", "Rate Environment", "Current mortgage rates, Fed policy, and spread analysis"),
+        ("3", "Market Commentary", "National outlook, local assessment, and key takeaways"),
+        ("4", "Neighborhood Profile", "Scope, zip code comparison, price and DOM distributions"),
+    ]
+    if target_price:
+        toc_items.append(
+            ("5", "Comparable Analysis",
+             f"Properties near ${target_price:,}"
+             + (f", {target_beds} beds" if target_beds else "")
+             + " - market position and value assessment"),
+        )
+
+    for num, title, desc in toc_items:
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*NAVY)
+        pdf.cell(10, 7, num, align="R")
+        pdf.cell(3, 7, "")
+        pdf.cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_x(31)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(*MID_TEXT)
+        pdf.cell(0, 5, desc, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+
     # ==================== MARKET OVERVIEW ====================
     pdf.add_page()
     pdf.section_title("Market Overview")
@@ -551,52 +655,6 @@ def generate_report(
         else:
             pdf.subsection_title(title)
             pdf.body_text(text)
-
-    # ==================== LISTINGS ====================
-    pdf.add_page()
-    pdf.section_title(f"Property Listings ({len(listings):,})")
-
-    if is_investment:
-        headers = ["Address", "Price", "Beds", "SqFt", "$/SqFt", "DOM", "PITI", "Rent Mult"]
-        widths = [52, 24, 14, 22, 22, 16, 22, 22]
-        aligns = ["L", "R", "C", "R", "R", "C", "R", "C"]
-    else:
-        headers = ["Address", "Price", "Beds", "Baths", "SqFt", "$/SqFt", "DOM", "PITI"]
-        widths = [52, 24, 14, 14, 22, 22, 16, 22]
-        aligns = ["L", "R", "C", "C", "R", "R", "C", "R"]
-
-    rows = []
-    for l in listings[:60]:
-        ppsf = f"${l.price_per_sqft:,.0f}" if l.price_per_sqft else "-"
-        dom = f"{l.days_on_market:.0f}" if l.days_on_market else "-"
-        piti = f"${l.monthly_piti(params):,.0f}"
-        if is_investment:
-            rm = l.rent_multiplier(params.per_bed_rent)
-            rows.append([
-                l.address[:28],
-                f"${l.price:,}",
-                str(l.bedrooms or "-"),
-                f"{l.sqft:,}" if l.sqft else "-",
-                ppsf, dom, piti,
-                f"{rm:,.0f}" if rm else "-",
-            ])
-        else:
-            rows.append([
-                l.address[:28],
-                f"${l.price:,}",
-                str(l.bedrooms or "-"),
-                str(l.bathrooms or "-"),
-                f"{l.sqft:,}" if l.sqft else "-",
-                ppsf, dom, piti,
-            ])
-
-    pdf.styled_table(headers, rows, widths, aligns)
-
-    if len(listings) > 60:
-        pdf.set_font("Helvetica", "I", 8)
-        pdf.set_text_color(*LIGHT_TEXT)
-        pdf.cell(0, 5, f"Showing top 60 of {len(listings)} listings. Full data available in CSV export.")
-        pdf.ln(5)
 
     # ==================== SECTION 1: NEIGHBORHOOD PROFILE ====================
     zip_groups: dict[str, list[Listing]] = {}
@@ -762,15 +820,16 @@ def generate_report(
                 ("Med. Comp DOM", f"{_median(comp_dom):.0f} days" if comp_dom else "N/A"),
             ])
 
-            # Comp listings table
+            # Comp listings table with clickable links
             pdf.subsection_title("Comparable Properties")
             comp_headers = ["Address", "Price", "Beds", "SqFt", "$/SqFt", "DOM", "Zip"]
-            comp_widths = [52, 26, 14, 22, 24, 16, 22]
+            comp_widths = [48, 24, 14, 20, 22, 14, 20]
             comp_aligns = ["L", "R", "C", "R", "R", "C", "C"]
             comp_rows = []
+            comp_links = []
             for l in sorted(comps, key=lambda x: abs(x.price - target_price))[:20]:
                 comp_rows.append([
-                    l.address[:28],
+                    l.address[:26],
                     f"${l.price:,}",
                     str(l.bedrooms or "-"),
                     f"{l.sqft:,}" if l.sqft else "-",
@@ -778,7 +837,8 @@ def generate_report(
                     f"{l.days_on_market:.0f}" if l.days_on_market else "-",
                     l.zip_code or "-",
                 ])
-            pdf.styled_table(comp_headers, comp_rows, comp_widths, comp_aligns)
+                comp_links.append(l.listing_url or "")
+            pdf.styled_table_with_links(comp_headers, comp_rows, comp_links, comp_widths, comp_aligns)
 
             # Value assessment
             if comp_ppsf and target_price and comps:
