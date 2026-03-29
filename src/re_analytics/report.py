@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import datetime
 
@@ -29,6 +30,63 @@ DIVIDER = (226, 232, 240)
 def _median(values: list) -> float | None:
     vals = [v for v in values if v is not None]
     return round(statistics.median(vals), 1) if vals else None
+
+
+def _dynamic_buckets(values: list[float], num_buckets: int = 5) -> list[tuple[str, float, float]]:
+    """Create clean, dynamic buckets from actual data distribution.
+
+    Returns list of (label, lo, hi) tuples with human-friendly boundaries.
+    """
+    vals = sorted(v for v in values if v is not None and v > 0)
+    if len(vals) < 3:
+        return []
+
+    lo = min(vals)
+    hi = max(vals)
+    spread = hi - lo
+
+    # Pick a clean rounding step based on the data range
+    if spread > 500_000:
+        step_round = 100_000
+    elif spread > 200_000:
+        step_round = 50_000
+    elif spread > 50_000:
+        step_round = 25_000
+    elif spread > 10_000:
+        step_round = 5_000
+    elif spread > 1_000:
+        step_round = 500
+    elif spread > 100:
+        step_round = 25
+    else:
+        step_round = 10
+
+    # Round lo down, hi up to clean boundaries
+    bucket_lo = math.floor(lo / step_round) * step_round
+    bucket_hi = math.ceil(hi / step_round) * step_round
+
+    # Calculate step size, snapped to clean increments
+    raw_step = (bucket_hi - bucket_lo) / num_buckets
+    step = max(step_round, math.ceil(raw_step / step_round) * step_round)
+
+    buckets = []
+    current = bucket_lo
+    while current < bucket_hi:
+        next_val = current + step
+        # Format label
+        if step_round >= 1_000:
+            def _fmt(v):
+                if v >= 1_000_000:
+                    return f"${v / 1_000_000:.1f}M" if v % 1_000_000 else f"${v // 1_000_000}M"
+                return f"${v // 1_000:,}K"
+        else:
+            def _fmt(v):
+                return f"${v:,.0f}"
+        label = f"{_fmt(current)}-{_fmt(next_val)}"
+        buckets.append((label, current, next_val))
+        current = next_val
+
+    return buckets
 
 
 class REReport(FPDF):
@@ -680,20 +738,13 @@ def generate_report(
                  new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
-    # Price tier + DOM combined table
+    # Price tier + DOM combined table (dynamic buckets)
     pdf.subsection_title("Price Tiers & Days on Market")
-    tiers = [
-        ("Under $300K", 0, 300_000),
-        ("$300K-$500K", 300_000, 500_000),
-        ("$500K-$750K", 500_000, 750_000),
-        ("$750K-$1M", 750_000, 1_000_000),
-        ("$1M+", 1_000_000, 999_999_999),
-    ]
+    tiers = _dynamic_buckets(price_vals, num_buckets=5)
     tier_rows = []
     for label, lo, hi in tiers:
         group = [l for l in listings if lo <= l.price < hi]
         if not group:
-            tier_rows.append([label, "0", "-", "-", "-", "-"])
             continue
         g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
         g_ppsf = [l.price_per_sqft for l in group if l.price_per_sqft]
@@ -765,15 +816,9 @@ def generate_report(
             ["C", "L", "C", "R", "R", "C"],
         )
 
-    # Price distribution
+    # Price distribution (dynamic buckets)
     pdf.subsection_title("Price Distribution")
-    price_bands = [
-        ("Under $400K", 0, 400_000),
-        ("$400K-$500K", 400_000, 500_000),
-        ("$500K-$600K", 500_000, 600_000),
-        ("$600K-$750K", 600_000, 750_000),
-        ("$750K+", 750_000, 999_999_999),
-    ]
+    price_bands = _dynamic_buckets(price_vals, num_buckets=5)
     dist_rows = []
     for label, lo, hi in price_bands:
         count = len([l for l in listings if lo <= l.price < hi])
@@ -787,18 +832,10 @@ def generate_report(
         ["L", "C", "C", "L"],
     )
 
-    # $/SqFt distribution
+    # $/SqFt distribution (dynamic buckets)
     if ppsf_vals:
         pdf.subsection_title("Price per SqFt Distribution")
-        min_ppsf = int(min(ppsf_vals))
-        max_ppsf = int(max(ppsf_vals))
-        step = max(50, (max_ppsf - min_ppsf) // 5)
-        ppsf_bands = []
-        lo_b = (min_ppsf // step) * step
-        while lo_b < max_ppsf + step:
-            hi_b = lo_b + step
-            ppsf_bands.append((f"${lo_b}-${hi_b}", lo_b, hi_b))
-            lo_b = hi_b
+        ppsf_bands = _dynamic_buckets(ppsf_vals, num_buckets=5)
         ppsf_rows = []
         for label, lo_b, hi_b in ppsf_bands:
             count = len([l for l in listings if l.price_per_sqft and lo_b <= l.price_per_sqft < hi_b])
