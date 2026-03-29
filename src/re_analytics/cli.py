@@ -64,7 +64,7 @@ def _build_table(listings: list[Listing], params: InvestmentParams) -> Table:
     table.add_column("$/SqFt", justify="right")
     table.add_column("RentMult", justify="right")
     table.add_column("PITI", justify="right")
-    table.add_column("Source", style="dim")
+    table.add_column("URL", style="dim", max_width=50, overflow="ellipsis")
 
     for i, l in enumerate(listings, 1):
         rent_mult = l.rent_multiplier(params.per_bed_rent)
@@ -79,7 +79,7 @@ def _build_table(listings: list[Listing], params: InvestmentParams) -> Table:
             _format_optional(l.price_per_sqft, "${:,.0f}"),
             _format_optional(rent_mult, "{:,.0f}"),
             f"${piti:,.0f}",
-            l.source,
+            l.listing_url or "—",
         )
     return table
 
@@ -190,13 +190,15 @@ def listings(
     # Export to CSV
     if output:
         csv_path = Path(output)
-        csv_path.write_text(listings_to_csv(results, inv_params))
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            f.write(listings_to_csv(results, inv_params))
         console.print(f"Exported to [cyan]{csv_path}[/cyan]")
     else:
         export = typer.confirm("Export to CSV?", default=False)
         if export:
             filename = f"listings_{city.lower().replace(' ', '_')}_{state.lower()}.csv"
-            Path(filename).write_text(listings_to_csv(results, inv_params))
+            with open(filename, "w", newline="", encoding="utf-8") as f:
+                f.write(listings_to_csv(results, inv_params))
             console.print(f"Exported to [cyan]{filename}[/cyan]")
 
 
