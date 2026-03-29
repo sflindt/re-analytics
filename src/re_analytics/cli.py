@@ -6,6 +6,10 @@ import asyncio
 import logging
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import typer
 from rich.console import Console
 from rich.table import Table
