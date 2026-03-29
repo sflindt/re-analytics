@@ -102,11 +102,19 @@ def listings(
     debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug logging of HTTP requests/responses"),
 ):
     """Search for investment property listings."""
-    log_level = logging.DEBUG if (debug or log) else logging.WARNING
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    # Terminal gets warnings only; --log file gets full debug output
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG if debug else logging.WARNING)
+    handlers: list[logging.Handler] = [stream_handler]
     if log:
-        handlers.append(logging.FileHandler(log, mode="w"))
-    logging.basicConfig(level=log_level, format="%(name)s: %(message)s", handlers=handlers)
+        file_handler = logging.FileHandler(log, mode="w")
+        file_handler.setLevel(logging.DEBUG)
+        handlers.append(file_handler)
+    logging.basicConfig(
+        level=logging.DEBUG if (debug or log) else logging.WARNING,
+        format="%(name)s: %(message)s",
+        handlers=handlers,
+    )
 
     console.print("\n[bold]What to Buy?[/bold]\n", style="cyan")
 

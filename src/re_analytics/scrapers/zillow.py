@@ -435,5 +435,8 @@ class ZillowScraper(BaseScraper):
             return None
 
     async def close(self) -> None:
-        if self._scrapfly:
-            self._scrapfly.close()
+        try:
+            if self._scrapfly:
+                self._scrapfly.close()
+        except Exception:
+            pass
