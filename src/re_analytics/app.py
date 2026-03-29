@@ -22,6 +22,8 @@ from re_analytics.models import (
 )
 from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
+from re_analytics.cache import list_cached, load_cached_file
+from re_analytics.report import generate_report
 
 # Load .env
 from dotenv import load_dotenv
@@ -265,14 +267,25 @@ with st.sidebar:
 
     st.markdown("---")
 
-    st.markdown("**Search Parameters**")
+    search_mode = st.radio(
+        "I'm looking for a...",
+        ["Investment Property", "Personal Home"],
+        index=0,
+        key="search_mode",
+        horizontal=True,
+    )
+    is_investment = search_mode == "Investment Property"
+
+    st.markdown("---")
+
+    st.markdown("**Search**")
     city = st.text_input("City", value="Salt Lake City")
     state = st.text_input("State", value="UT", max_chars=2)
 
     property_type = st.selectbox(
         "Property Type",
         ["Multi-family", "Single-family", "Any"],
-        index=0,
+        index=0 if is_investment else 2,
     )
     type_map = {
         "Multi-family": PropertyType.MULTI_FAMILY,
@@ -288,30 +301,52 @@ with st.sidebar:
 
     search_area = st.slider("Search Radius (sq mi)", min_value=10, max_value=200, value=50)
 
-    st.markdown("---")
-    search_mode = st.radio(
-        "I'm looking for a...",
-        ["Investment Property", "Personal Home"],
-        index=0,
-        key="search_mode",
-    )
-    is_investment = search_mode == "Investment Property"
-
     if is_investment:
+        st.markdown("---")
         st.markdown("**Investment Assumptions**")
         per_bed_rent = st.number_input("Rent / Bed ($/mo)", value=600, step=50)
     else:
-        per_bed_rent = 600  # default, unused in personal mode
-
-    st.markdown("**Financing**")
-    down_pmt = st.slider("Down Payment %", min_value=5, max_value=50, value=25 if is_investment else 20) / 100
-    interest_rate = st.number_input("Interest Rate %", value=6.7, step=0.1, format="%.1f") / 100
-    insurance_rate = st.number_input("Insurance Rate %", value=0.43, step=0.01, format="%.2f") / 100
+        per_bed_rent = 600
 
     st.markdown("---")
     search_clicked = st.button("Search Properties", type="primary", use_container_width=True)
 
+    # --- Load previous results ---
+    cached_searches = list_cached()
+    if cached_searches:
+        st.markdown("---")
+        with st.expander("Load Previous Results"):
+            cache_options = {
+                f"{c['city']}, {c['state']} — {c['count']} listings ({c['age_hours']:.0f}h ago)": c["file"]
+                for c in cached_searches[:10]
+            }
+            selected_cache = st.selectbox(
+                "Previous searches",
+                options=list(cache_options.keys()),
+                key="cache_select",
+            )
+            if st.button("Load", key="load_cache_btn"):
+                fname = cache_options[selected_cache]
+                cached_listings = load_cached_file(fname)
+                if cached_listings:
+                    # Extract city/state from cache metadata
+                    meta = next((c for c in cached_searches if c["file"] == fname), {})
+                    st.session_state.listings = cached_listings
+                    st.session_state.search_city = meta.get("city", city)
+                    st.session_state.search_state = meta.get("state", state).upper()
+                    # Also load rates
+                    fred_key = os.environ.get("FRED_API_KEY")
+                    st.session_state.rates = _run_async(get_current_rates(fred_key))
+                    st.rerun()
+                else:
+                    st.error("Failed to load cached results.")
+
 # --- State management ---
+
+# Financing defaults — shown inline on relevant tabs, not sidebar
+down_pmt = 0.25 if is_investment else 0.20
+interest_rate = 0.067
+insurance_rate = 0.0043
 
 inv_params = InvestmentParams(
     per_bed_rent=float(per_bed_rent),
@@ -346,7 +381,7 @@ if search_clicked:
         st.session_state.search_city = city
         st.session_state.search_state = state.upper()
 
-    # Fetch rates in background
+    # Fetch rates
     with st.spinner("Loading rate environment..."):
         fred_key = os.environ.get("FRED_API_KEY")
         rates = _run_async(get_current_rates(fred_key))
@@ -398,11 +433,51 @@ if not listings:
 search_city = st.session_state.search_city
 search_state = st.session_state.search_state
 
-st.markdown(f'<p class="brand-header">{search_city}, {search_state}</p>', unsafe_allow_html=True)
-st.markdown(
-    f'<p class="brand-subtitle">{len(listings)} properties found &mdash; {property_type.lower()}</p>',
-    unsafe_allow_html=True,
-)
+header_col, actions_col = st.columns([3, 1])
+with header_col:
+    st.markdown(f'<p class="brand-header">{search_city}, {search_state}</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="brand-subtitle">{len(listings)} properties found &mdash; {property_type.lower()}</p>',
+        unsafe_allow_html=True,
+    )
+with actions_col:
+    # Financing adjustment (compact)
+    with st.expander("Financing"):
+        down_pmt = st.slider("Down Payment %", 5, 50, int(down_pmt * 100), key="fin_down") / 100
+        interest_rate = st.number_input("Rate %", value=interest_rate * 100, step=0.1, format="%.1f", key="fin_rate") / 100
+        insurance_rate = st.number_input("Insurance %", value=insurance_rate * 100, step=0.01, format="%.2f", key="fin_ins") / 100
+    inv_params = InvestmentParams(
+        per_bed_rent=float(per_bed_rent),
+        down_pmt_pct=down_pmt,
+        interest_rate=interest_rate,
+        insurance_rate=insurance_rate,
+    )
+
+    # PDF + CSV downloads
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        pdf_bytes = generate_report(
+            listings, inv_params, search_city, search_state,
+            is_investment=is_investment,
+            rates=st.session_state.rates,
+        )
+        st.download_button(
+            "PDF Report",
+            data=pdf_bytes,
+            file_name=f"re_analytics_{search_city.lower().replace(' ', '_')}_{search_state.lower()}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    with dl_col2:
+        csv_data = listings_to_csv(listings, inv_params)
+        if csv_data:
+            st.download_button(
+                "CSV Export",
+                data=csv_data,
+                file_name=f"listings_{search_city.lower().replace(' ', '_')}_{search_state.lower()}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
 # Tabs — mode-aware
 if is_investment:
@@ -659,15 +734,15 @@ with tab_listings:
             "Score", min_value=0, max_value=100, format="%d",
         ),
         "URL": st.column_config.LinkColumn("Listing", display_text="View"),
-        "Price": st.column_config.NumberColumn("Price", format="$%d"),
-        "$/SqFt": st.column_config.NumberColumn("$/SqFt", format="$%d"),
-        "DOM": st.column_config.NumberColumn("DOM", format="%d"),
-        "PITI": st.column_config.NumberColumn("PITI", format="$%d"),
+        "Price": st.column_config.NumberColumn("Price", format="$%,.0f"),
+        "$/SqFt": st.column_config.NumberColumn("$/SqFt", format="$,.0f"),
+        "DOM": st.column_config.NumberColumn("DOM", format=",.0f"),
+        "PITI": st.column_config.NumberColumn("PITI", format="$%,.0f"),
         "Latitude": None,
         "Longitude": None,
     }
     if is_investment:
-        col_cfg["Rent Mult"] = st.column_config.NumberColumn("Rent Mult", format="%d")
+        col_cfg["Rent Mult"] = st.column_config.NumberColumn("Rent Mult", format="%,.0f")
     else:
         col_cfg["Score"] = None
         col_cfg[""] = None  # score indicator

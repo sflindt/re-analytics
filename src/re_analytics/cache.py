@@ -52,6 +52,41 @@ def get_cached(criteria: SearchCriteria, ttl: int = DEFAULT_TTL) -> list[Listing
         return None
 
 
+def list_cached() -> list[dict]:
+    """List all cached searches with metadata (for the 'load previous' UI)."""
+    if not CACHE_DIR.exists():
+        return []
+    results = []
+    for f in sorted(CACHE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            age_hrs = (time.time() - data.get("cached_at", 0)) / 3600
+            results.append({
+                "file": f.name,
+                "city": data.get("city", "?"),
+                "state": data.get("state", "?"),
+                "count": data.get("count", 0),
+                "age_hours": round(age_hrs, 1),
+                "cached_at": data.get("cached_at", 0),
+            })
+        except Exception:
+            continue
+    return results
+
+
+def load_cached_file(filename: str) -> list[Listing] | None:
+    """Load listings from a specific cache file (ignoring TTL)."""
+    cache_file = CACHE_DIR / filename
+    if not cache_file.exists():
+        return None
+    try:
+        data = json.loads(cache_file.read_text())
+        return [Listing(**item) for item in data.get("listings", [])]
+    except Exception as e:
+        logger.debug(f"Failed to load cache file {filename}: {e}")
+        return None
+
+
 def set_cached(criteria: SearchCriteria, listings: list[Listing]) -> None:
     """Store listings in cache."""
     try:

@@ -20,6 +20,7 @@ dependencies = [
     "pyzill>=1.0",
     "geopy>=2.0",
     "streamlit>=1.30",
+    "fpdf2>=2.7",
 ]
 
 [project.optional-dependencies]
