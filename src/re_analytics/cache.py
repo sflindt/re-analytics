@@ -65,6 +65,7 @@ def list_cached() -> list[dict]:
                 "file": f.name,
                 "city": data.get("city", "?"),
                 "state": data.get("state", "?"),
+                "property_type": data.get("property_type", ""),
                 "count": data.get("count", 0),
                 "age_hours": round(age_hrs, 1),
                 "cached_at": data.get("cached_at", 0),
@@ -97,6 +98,7 @@ def set_cached(criteria: SearchCriteria, listings: list[Listing]) -> None:
             "cached_at": time.time(),
             "city": criteria.city,
             "state": criteria.state,
+            "property_type": criteria.property_type,
             "count": len(listings),
             "listings": [asdict(l) for l in listings],
         }

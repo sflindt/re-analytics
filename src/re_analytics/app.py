@@ -114,6 +114,28 @@ st.markdown("""
     [data-testid="stSidebar"] [data-baseweb="select"] {
         color: #212529 !important;
     }
+    /* White buttons/boxes in sidebar need dark text */
+    [data-testid="stSidebar"] button {
+        color: #1B2A4A !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="select"] span,
+    [data-testid="stSidebar"] [data-baseweb="select"] div {
+        color: #212529 !important;
+    }
+    [data-testid="stSidebar"] .streamlit-expanderHeader,
+    [data-testid="stSidebar"] .streamlit-expanderHeader *,
+    [data-testid="stSidebar"] summary,
+    [data-testid="stSidebar"] summary * {
+        color: #1B2A4A !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] {
+        background: white;
+        border-radius: 6px;
+        padding: 2px 6px;
+    }
+    [data-testid="stSidebar"] [data-testid="stExpander"] * {
+        color: #1B2A4A !important;
+    }
 
     /* Tabs — clean, consulting-style */
     .stTabs [data-baseweb="tab-list"] {
@@ -360,8 +382,12 @@ with st.sidebar:
     cached_searches = list_cached()
     if cached_searches:
         with st.expander("Load Previous Results"):
+            def _cache_label(c):
+                ptype = c.get("property_type", "")
+                tag = "Multi-Family" if ptype and "multi" in ptype.lower() else "Single Family"
+                return f"{c['city']}, {c['state']} [{tag}] - {c['count']} listings ({c['age_hours']:.0f}h ago)"
             cache_options = {
-                f"{c['city']}, {c['state']} - {c['count']} listings ({c['age_hours']:.0f}h ago)": c["file"]
+                _cache_label(c): c["file"]
                 for c in cached_searches[:10]
             }
             selected_cache = st.selectbox(
