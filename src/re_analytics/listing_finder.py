@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from rich.console import Console
 
@@ -101,8 +102,12 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
         # Web scraper as fallback for Utah
         scrapers.append(UtahRealEstateWebScraper())
 
-    # Zillow via Scrapfly (reliable) — use --source zillow-browser for Playwright
-    scrapers.append(ZillowScraper())
+    # Zillow: prefer Playwright (free/unlimited), fall back to Scrapfly if configured
+    scrapfly_key = os.environ.get("SCRAPFLY_API_KEY", "")
+    if scrapfly_key:
+        scrapers.append(ZillowScraper())
+    else:
+        scrapers.append(ZillowBrowserScraper())
 
     # Redfin as additional source
     scrapers.append(RedfinScraper())

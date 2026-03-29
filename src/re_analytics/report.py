@@ -486,6 +486,8 @@ def generate_report(
     target_beds: int | None = None,
     appreciation: dict | None = None,
     area_news: str | None = None,
+    zip_appreciation: dict | None = None,
+    population: dict | None = None,
 ) -> bytes:
     """Generate a professional PDF report."""
 
@@ -848,37 +850,58 @@ def generate_report(
     pdf.section_title("Neighborhood Profile")
 
     # Growth context at top of neighborhood section
-    if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
-        yoy = appreciation.get("yoy_pct")
-        fiveyr = appreciation.get("five_yr_pct")
-        parts = []
-        if yoy is not None:
-            direction = "up" if yoy > 0 else "down"
-            parts.append(f"home prices are {direction} {abs(yoy):.1f}% year-over-year")
-        if fiveyr is not None:
-            parts.append(f"{fiveyr:+.1f}% over 5 years")
-        growth_text = (
-            f"In the {city} metro area, {' and '.join(parts)} "
-            f"(FHFA House Price Index). "
-        )
-        if yoy and yoy > 5:
-            growth_text += "Strong appreciation suggests a competitive market for buyers."
-        elif yoy and yoy > 0:
-            growth_text += "Moderate, healthy growth indicates a stable market."
-        elif yoy and yoy <= 0:
-            growth_text += "Flat or declining prices may create buying opportunities."
+    has_appre = appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct"))
+    has_pop = population and population.get("population")
+    if has_appre or has_pop:
+        growth_parts = []
+        if has_appre:
+            yoy = appreciation.get("yoy_pct")
+            fiveyr = appreciation.get("five_yr_pct")
+            price_parts = []
+            if yoy is not None:
+                direction = "up" if yoy > 0 else "down"
+                price_parts.append(f"home prices are {direction} {abs(yoy):.1f}% year-over-year")
+            if fiveyr is not None:
+                price_parts.append(f"{fiveyr:+.1f}% over 5 years")
+            growth_parts.append(
+                f"In the {city} metro area, {' and '.join(price_parts)} "
+                f"(FHFA House Price Index)."
+            )
+        if has_pop:
+            pop = population["population"]
+            pop_name = population.get("name", city)
+            pop_yoy = population.get("yoy_change_pct")
+            pop_3yr = population.get("three_yr_change_pct")
+            pop_str = f"{pop_name} population: {pop:,}"
+            if pop_yoy is not None:
+                pop_str += f" ({pop_yoy:+.1f}% YoY)"
+            if pop_3yr is not None:
+                pop_str += f", {pop_3yr:+.1f}% since 2020"
+            pop_str += "."
+            growth_parts.append(pop_str)
+
+        growth_text = " ".join(growth_parts) + " "
+        if has_appre:
+            yoy = appreciation.get("yoy_pct")
+            if yoy and yoy > 5:
+                growth_text += "Strong appreciation suggests a competitive market."
+            elif yoy and yoy > 0:
+                growth_text += "Moderate, healthy growth indicates a stable market."
+            elif yoy and yoy <= 0:
+                growth_text += "Flat or declining prices may create buying opportunities."
         pdf.callout_box("Growth Trend", growth_text)
 
-    # Zip code comparison with city
+    # Zip code comparison with city and appreciation
     if len(zip_groups) > 1:
         pdf.subsection_title("Zip Code Comparison")
+        has_zip_appre = bool(zip_appreciation)
         zip_rows = []
         for z in sorted(zip_groups.keys()):
             group = zip_groups[z]
             g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
             # Get primary city for this zip
             zip_city = max(set(l.city for l in group if l.city), key=lambda c: sum(1 for l in group if l.city == c)) if any(l.city for l in group) else "-"
-            zip_rows.append([
+            row = [
                 z,
                 zip_city,
                 str(len(group)),
@@ -887,13 +910,21 @@ def generate_report(
                 f"${_median([l.price_per_sqft for l in group if l.price_per_sqft]):,.0f}"
                     if any(l.price_per_sqft for l in group) else "-",
                 f"{_median(g_dom):.0f}" if g_dom else "-",
-            ])
-        pdf.styled_table(
-            ["Zip", "City", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM"],
-            zip_rows,
-            [20, 28, 16, 28, 26, 20],
-            ["C", "L", "C", "R", "R", "C"],
-        )
+            ]
+            if has_zip_appre:
+                za = zip_appreciation.get(z, {})
+                yoy = za.get("yoy_pct")
+                row.append(f"{yoy:+.1f}%" if yoy is not None else "--")
+            zip_rows.append(row)
+
+        headers = ["Zip", "City", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM"]
+        widths = [18, 26, 14, 26, 24, 18]
+        aligns = ["C", "L", "C", "R", "R", "C"]
+        if has_zip_appre:
+            headers.append("1yr HPA")
+            widths.append(18)
+            aligns.append("C")
+        pdf.styled_table(headers, zip_rows, widths, aligns)
 
     # Price distribution (dynamic buckets)
     pdf.subsection_title("Price Distribution")

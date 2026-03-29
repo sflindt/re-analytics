@@ -22,7 +22,7 @@ from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
 from re_analytics.cache import list_cached, load_cached_file
 from re_analytics.report import generate_report, _dynamic_buckets, _dom_pace, _normalize_status
-from re_analytics.rates import fetch_appreciation_fred
+from re_analytics.rates import fetch_appreciation_fred, fetch_zip_appreciation, fetch_population_growth
 from re_analytics.research import fetch_area_news
 from re_analytics.demo_data import DEMO_LISTINGS, DEMO_CITY, DEMO_STATE, DEMO_RATES
 
@@ -374,6 +374,10 @@ if "appreciation" not in st.session_state:
     st.session_state.appreciation = None
 if "area_news" not in st.session_state:
     st.session_state.area_news = None
+if "zip_appreciation" not in st.session_state:
+    st.session_state.zip_appreciation = None
+if "population" not in st.session_state:
+    st.session_state.population = None
 
 if search_clicked:
     criteria = SearchCriteria(
@@ -392,13 +396,19 @@ if search_clicked:
         st.session_state.search_city = city
         st.session_state.search_state = state.upper()
 
-    # Fetch rates
-    with st.spinner("Loading rate environment..."):
+    # Fetch rates and market data
+    with st.spinner("Loading rate environment and market data..."):
         fred_key = os.environ.get("FRED_API_KEY")
         rates = _run_async(get_current_rates(fred_key))
         st.session_state.rates = rates
-        # Fetch appreciation data
+        # Fetch metro appreciation
         st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+        # Fetch ZIP-level appreciation
+        zip_codes = list(set(l.zip_code for l in results if l.zip_code))
+        if zip_codes:
+            st.session_state.zip_appreciation = _run_async(fetch_zip_appreciation(zip_codes))
+        # Fetch population data
+        st.session_state.population = _run_async(fetch_population_growth(city, state.upper()))
 
     # Fetch area news (non-blocking, best effort)
     with st.spinner("Researching area news..."):
@@ -503,6 +513,8 @@ with actions_col:
             target_beds=target_beds,
             appreciation=st.session_state.appreciation,
             area_news=st.session_state.area_news,
+            zip_appreciation=st.session_state.zip_appreciation,
+            population=st.session_state.population,
         ))
         st.download_button(
             "PDF Report",
@@ -1119,6 +1131,19 @@ if tab_neighborhood is not None:
             score = scores[i] if i < len(scores) else 50
             zip_groups.setdefault(zc, []).append((l, score))
 
+        # Population growth display
+        pop_data = st.session_state.population
+        if pop_data and pop_data.get("population"):
+            pop_cols = st.columns(3)
+            pop_cols[0].metric("Population", f"{pop_data['population']:,}")
+            if pop_data.get("yoy_change_pct") is not None:
+                pop_cols[1].metric("YoY Change", f"{pop_data['yoy_change_pct']:+.1f}%")
+            if pop_data.get("three_yr_change_pct") is not None:
+                pop_cols[2].metric("Since 2020", f"{pop_data['three_yr_change_pct']:+.1f}%")
+            st.caption(f"Source: U.S. Census Bureau Population Estimates ({pop_data.get('name', '')})")
+            st.markdown("---")
+
+        zip_appre = st.session_state.zip_appreciation or {}
         zip_rows = []
         for zc, group in sorted(zip_groups.items()):
             ls = [g[0] for g in group]
@@ -1126,7 +1151,7 @@ if tab_neighborhood is not None:
             # Primary city for this zip
             zip_cities = [l.city for l in ls if l.city]
             primary_city = max(set(zip_cities), key=zip_cities.count) if zip_cities else "-"
-            zip_rows.append({
+            row = {
                 "Zip Code": zc,
                 "City": primary_city,
                 "Count": len(ls),
@@ -1134,18 +1159,29 @@ if tab_neighborhood is not None:
                 "Median $/SqFt": _median([l.price_per_sqft for l in ls if l.price_per_sqft]),
                 "Median DOM": _median([l.days_on_market for l in ls if l.days_on_market is not None]),
                 "Avg Score": round(sum(sc) / len(sc), 1) if sc else None,
-            })
+            }
+            za = zip_appre.get(zc, {})
+            if zip_appre:
+                row["1yr HPA"] = za.get("yoy_pct")
+                row["5yr HPA"] = za.get("five_yr_pct")
+                row["ZHVI"] = za.get("current")
+            zip_rows.append(row)
 
         zip_df = pd.DataFrame(zip_rows)
 
         if not zip_df.empty:
+            fmt = {
+                "Median Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
+                "Median $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
+                "Median DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "--",
+                "Avg Score": lambda x: f"{x:.1f}" if pd.notna(x) else "--",
+            }
+            if "1yr HPA" in zip_df.columns:
+                fmt["1yr HPA"] = lambda x: f"{x:+.1f}%" if pd.notna(x) else "--"
+                fmt["5yr HPA"] = lambda x: f"{x:+.1f}%" if pd.notna(x) else "--"
+                fmt["ZHVI"] = lambda x: f"${x:,.0f}" if pd.notna(x) else "--"
             st.dataframe(
-                zip_df.style.format({
-                    "Median Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
-                    "Median $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "--",
-                    "Median DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "--",
-                    "Avg Score": lambda x: f"{x:.1f}" if pd.notna(x) else "--",
-                }),
+                zip_df.style.format(fmt),
                 use_container_width=True,
                 hide_index=True,
             )

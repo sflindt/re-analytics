@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -176,6 +177,220 @@ async def fetch_appreciation_fred(api_key: str | None = None) -> dict:
 
     except Exception as e:
         logger.debug(f"FHFA HPI fetch failed: {e}")
+
+    return result
+
+
+async def fetch_zip_appreciation(zip_codes: list[str]) -> dict[str, dict]:
+    """Fetch ZIP-level home value appreciation from Zillow ZHVI public CSV.
+
+    Uses Zillow's publicly hosted ZHVI (Zillow Home Value Index) data:
+    Single-Family Homes, smoothed, seasonally adjusted, by ZIP code.
+
+    Returns {zip_code: {"current": float, "yoy_pct": float, "five_yr_pct": float}} or empty.
+    """
+    import csv
+    import io
+
+    ZHVI_URL = (
+        "https://files.zillowstatic.com/research/public_csvs/zhvi/"
+        "Zip_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+    )
+    result: dict[str, dict] = {}
+    target_zips = set(z.strip() for z in zip_codes)
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            resp = await client.get(ZHVI_URL)
+            if resp.status_code != 200:
+                logger.debug(f"ZHVI CSV fetch failed: HTTP {resp.status_code}")
+                return result
+
+            reader = csv.DictReader(io.StringIO(resp.text))
+            # Column headers are dates like "2000-01-31", "2000-02-29", etc.
+            # We need the last few date columns for appreciation calc
+            fieldnames = reader.fieldnames or []
+            date_cols = [c for c in fieldnames if c and len(c) == 10 and c[4] == "-"]
+            if len(date_cols) < 2:
+                return result
+
+            date_cols.sort()  # chronological order
+            latest_col = date_cols[-1]
+            yoy_col = date_cols[-13] if len(date_cols) >= 13 else None  # ~12 months ago
+            fiveyr_col = date_cols[-61] if len(date_cols) >= 61 else None  # ~60 months ago
+
+            for row in reader:
+                zip_code = row.get("RegionName", "").strip()
+                if zip_code not in target_zips:
+                    continue
+
+                current_val = row.get(latest_col, "")
+                if not current_val:
+                    continue
+
+                try:
+                    current = float(current_val)
+                except (ValueError, TypeError):
+                    continue
+
+                entry: dict = {"current": current, "yoy_pct": None, "five_yr_pct": None,
+                               "as_of": latest_col}
+
+                if yoy_col:
+                    yoy_val = row.get(yoy_col, "")
+                    if yoy_val:
+                        try:
+                            yoy_ref = float(yoy_val)
+                            if yoy_ref > 0:
+                                entry["yoy_pct"] = round((current - yoy_ref) / yoy_ref * 100, 1)
+                        except (ValueError, TypeError):
+                            pass
+
+                if fiveyr_col:
+                    fiveyr_val = row.get(fiveyr_col, "")
+                    if fiveyr_val:
+                        try:
+                            fiveyr_ref = float(fiveyr_val)
+                            if fiveyr_ref > 0:
+                                entry["five_yr_pct"] = round(
+                                    (current - fiveyr_ref) / fiveyr_ref * 100, 1
+                                )
+                        except (ValueError, TypeError):
+                            pass
+
+                result[zip_code] = entry
+
+                if len(result) == len(target_zips):
+                    break  # Found all requested ZIPs
+
+    except Exception as e:
+        logger.debug(f"ZHVI ZIP appreciation fetch failed: {e}")
+
+    return result
+
+
+async def fetch_population_growth(city: str, state: str) -> dict:
+    """Fetch population estimates from Census Bureau ACS API.
+
+    Uses the Census Population Estimates Program for place-level data.
+    Falls back to county-level if place not found.
+
+    Returns {"population": int, "yoy_change_pct": float, ...} or empty dict.
+    """
+    # Census state FIPS codes
+    STATE_FIPS = {
+        "AL": "01", "AK": "02", "AZ": "04", "AR": "05", "CA": "06",
+        "CO": "08", "CT": "09", "DE": "10", "FL": "12", "GA": "13",
+        "HI": "15", "ID": "16", "IL": "17", "IN": "18", "IA": "19",
+        "KS": "20", "KY": "21", "LA": "22", "ME": "23", "MD": "24",
+        "MA": "25", "MI": "26", "MN": "27", "MS": "28", "MO": "29",
+        "MT": "30", "NE": "31", "NV": "32", "NH": "33", "NJ": "34",
+        "NM": "35", "NY": "36", "NC": "37", "ND": "38", "OH": "39",
+        "OK": "40", "OR": "41", "PA": "42", "RI": "44", "SC": "45",
+        "SD": "46", "TN": "47", "TX": "48", "UT": "49", "VT": "50",
+        "VA": "51", "WA": "53", "WV": "54", "WI": "55", "WY": "56",
+    }
+
+    state_upper = state.strip().upper()
+    state_fips = STATE_FIPS.get(state_upper)
+    if not state_fips:
+        return {}
+
+    result: dict = {}
+    census_api_key = os.environ.get("CENSUS_API_KEY", "")
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # Try Census Population Estimates API (most recent years)
+            # PEP endpoint: population estimates for places
+            base_url = "https://api.census.gov/data/2023/pep/population"
+            params: dict[str, str] = {
+                "get": "POP_2023,POP_2022,POP_2020,NAME",
+                "for": "place:*",
+                "in": f"state:{state_fips}",
+            }
+            if census_api_key:
+                params["key"] = census_api_key
+
+            resp = await client.get(base_url, params=params)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if len(data) > 1:
+                    headers = data[0]
+                    city_lower = city.strip().lower()
+
+                    for row in data[1:]:
+                        row_dict = dict(zip(headers, row))
+                        name = row_dict.get("NAME", "")
+                        # Census names like "Salt Lake City city, Utah"
+                        place_name = name.split(",")[0].replace(" city", "").replace(" town", "")
+                        if place_name.strip().lower() == city_lower:
+                            try:
+                                pop_2023 = int(row_dict.get("POP_2023", 0))
+                                pop_2022 = int(row_dict.get("POP_2022", 0))
+                                pop_2020 = int(row_dict.get("POP_2020", 0))
+
+                                result["population"] = pop_2023
+                                result["name"] = name.split(",")[0].strip()
+
+                                if pop_2022 > 0:
+                                    result["yoy_change_pct"] = round(
+                                        (pop_2023 - pop_2022) / pop_2022 * 100, 2
+                                    )
+                                if pop_2020 > 0:
+                                    result["three_yr_change_pct"] = round(
+                                        (pop_2023 - pop_2020) / pop_2020 * 100, 2
+                                    )
+                                    result["pop_2020"] = pop_2020
+                            except (ValueError, TypeError):
+                                pass
+                            break
+
+            # If no place-level data, try county-level as fallback
+            if not result:
+                params_county: dict[str, str] = {
+                    "get": "POP_2023,POP_2022,POP_2020,NAME",
+                    "for": "county:*",
+                    "in": f"state:{state_fips}",
+                }
+                if census_api_key:
+                    params_county["key"] = census_api_key
+
+                resp2 = await client.get(base_url, params=params_county)
+                if resp2.status_code == 200:
+                    data2 = resp2.json()
+                    if len(data2) > 1:
+                        headers2 = data2[0]
+                        for row in data2[1:]:
+                            row_dict = dict(zip(headers2, row))
+                            name = row_dict.get("NAME", "")
+                            # Match county containing the city name
+                            if city_lower in name.lower():
+                                try:
+                                    pop_2023 = int(row_dict.get("POP_2023", 0))
+                                    pop_2022 = int(row_dict.get("POP_2022", 0))
+                                    pop_2020 = int(row_dict.get("POP_2020", 0))
+
+                                    result["population"] = pop_2023
+                                    result["name"] = name.split(",")[0].strip()
+                                    result["level"] = "county"
+
+                                    if pop_2022 > 0:
+                                        result["yoy_change_pct"] = round(
+                                            (pop_2023 - pop_2022) / pop_2022 * 100, 2
+                                        )
+                                    if pop_2020 > 0:
+                                        result["three_yr_change_pct"] = round(
+                                            (pop_2023 - pop_2020) / pop_2020 * 100, 2
+                                        )
+                                        result["pop_2020"] = pop_2020
+                                except (ValueError, TypeError):
+                                    pass
+                                break
+
+    except Exception as e:
+        logger.debug(f"Census population fetch failed: {e}")
 
     return result
 

@@ -14,7 +14,12 @@ import logging
 import os
 import re
 
-from scrapfly import ScrapflyClient, ScrapeConfig
+try:
+    from scrapfly import ScrapflyClient, ScrapeConfig
+except ImportError:
+    ScrapflyClient = None  # type: ignore[assignment,misc]
+    ScrapeConfig = None  # type: ignore[assignment,misc]
+
 from geopy import Point
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
@@ -216,8 +221,8 @@ class ZillowScraper(BaseScraper):
     def __init__(self, debug: bool = False):
         self.debug = debug
         self._api_key = os.environ.get("SCRAPFLY_API_KEY", "")
-        self._scrapfly: ScrapflyClient | None = None
-        if self._api_key:
+        self._scrapfly = None
+        if self._api_key and ScrapflyClient is not None:
             self._scrapfly = ScrapflyClient(key=self._api_key)
 
     async def _scrapfly_zillow_search(self, body: dict) -> dict:

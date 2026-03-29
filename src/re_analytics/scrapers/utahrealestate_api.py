@@ -86,7 +86,12 @@ class UtahRealEstateAPI(BaseScraper):
     def _build_filter(self, criteria: SearchCriteria, include_sold: bool = False) -> str:
         filters = []
         if include_sold:
-            filters.append("(StandardStatus eq 'Active' or StandardStatus eq 'Closed')")
+            # Only closed listings (active fetched separately to avoid duplication)
+            filters.append("StandardStatus eq 'Closed'")
+            # Limit to recent closings (last 6 months) for comp relevance
+            from datetime import datetime, timedelta
+            six_months_ago = (datetime.now() - timedelta(days=180)).strftime("%Y-%m-%d")
+            filters.append(f"CloseDate ge {six_months_ago}")
         else:
             filters.append("StandardStatus eq 'Active'")
         filters.append(f"City eq '{criteria.city}'")
@@ -105,11 +110,24 @@ class UtahRealEstateAPI(BaseScraper):
 
         client = self._get_client()
         listings: list[Listing] = []
+
+        # Fetch active listings
+        listings.extend(await self._fetch_pages(client, criteria, include_sold=False))
+
+        # Also fetch recently closed listings for comp analysis
+        listings.extend(await self._fetch_pages(client, criteria, include_sold=True))
+
+        return listings
+
+    async def _fetch_pages(
+        self, client: httpx.AsyncClient, criteria: SearchCriteria, include_sold: bool
+    ) -> list[Listing]:
+        listings: list[Listing] = []
         skip = 0
 
         while True:
             params = {
-                "$filter": self._build_filter(criteria),
+                "$filter": self._build_filter(criteria, include_sold=include_sold),
                 "$select": ",".join(SELECT_FIELDS),
                 "$top": str(PAGE_SIZE),
                 "$skip": str(skip),
