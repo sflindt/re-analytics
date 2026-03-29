@@ -556,10 +556,12 @@ with tab_listings:
 
     # --- Filters ---
     st.markdown("#### Filters")
-    fcol1, fcol2, fcol3 = st.columns([2, 1, 1])
 
     price_min_data = int(df["Price"].min()) if not df.empty else 0
     price_max_data = int(df["Price"].max()) if not df.empty else 1_000_000
+
+    # Row 1: price + beds + sort
+    fcol1, fcol2, fcol3 = st.columns([2, 1, 1])
 
     with fcol1:
         price_range = st.slider(
@@ -582,13 +584,43 @@ with tab_listings:
         )
 
     with fcol3:
-        sort_options = ["Score", "Price", "$/SqFt", "DOM", "Rent Mult"]
+        if is_investment:
+            sort_options = ["Score", "Price", "$/SqFt", "DOM", "Rent Mult"]
+        else:
+            sort_options = ["Price", "$/SqFt", "DOM", "SqFt", "Beds"]
         sort_by = st.selectbox(
             "Sort By",
             options=sort_options,
             index=0,
             key="listings_sort_by",
         )
+
+    # Row 2: city filter + max payment (personal mode adds payment filter)
+    cities_in_results = sorted(df["City"].dropna().unique().tolist()) if not df.empty else []
+    fcol4, fcol5 = st.columns(2)
+
+    with fcol4:
+        selected_cities = st.multiselect(
+            "Cities",
+            options=cities_in_results,
+            default=cities_in_results,
+            key="listings_cities",
+        )
+
+    with fcol5:
+        if not is_investment:
+            max_piti_data = int(df["PITI"].max()) if not df.empty and "PITI" in df.columns else 10_000
+            max_monthly = st.slider(
+                "Max Monthly Payment (PITI)",
+                min_value=500,
+                max_value=max(max_piti_data + 500, 10_000),
+                value=max(max_piti_data + 500, 10_000),
+                step=100,
+                format="$%d",
+                key="listings_max_piti",
+            )
+        else:
+            max_monthly = None
 
     # Apply filters
     filtered_df = df.copy()
@@ -598,6 +630,10 @@ with tab_listings:
     ]
     if min_beds > 0:
         filtered_df = filtered_df[filtered_df["Beds"].fillna(0) >= min_beds]
+    if selected_cities:
+        filtered_df = filtered_df[filtered_df["City"].isin(selected_cities)]
+    if max_monthly is not None:
+        filtered_df = filtered_df[filtered_df["PITI"].fillna(0) <= max_monthly]
 
     # Apply sort
     sort_ascending = sort_by != "Score"  # Score: descending; others: ascending
