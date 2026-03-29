@@ -357,7 +357,11 @@ class ZillowScraper(BaseScraper):
                 break
 
             initial_count = len(all_listings)
-            for item in results:
+            parse_failures = 0
+            for idx, item in enumerate(results):
+                if idx == 0:
+                    logger.debug(f"Sample result keys: {list(item.keys())}")
+                    logger.debug(f"Sample result: {json.dumps(item, default=str)[:500]}")
                 zpid = str(item.get("zpid", ""))
                 if not zpid or zpid in unique_zpids:
                     continue
@@ -365,6 +369,9 @@ class ZillowScraper(BaseScraper):
                 listing = self._parse_result(item, criteria)
                 if listing:
                     all_listings.append(listing)
+                else:
+                    parse_failures += 1
+            logger.debug(f"Page {page}: parsed {len(all_listings) - initial_count} listings, {parse_failures} parse failures")
 
             # Stop if no new unique listings found
             if len(all_listings) == initial_count:
@@ -424,7 +431,7 @@ class ZillowScraper(BaseScraper):
                 days_on_market=days_on_zillow,
             )
         except Exception as e:
-            logger.debug(f"Failed to parse Zillow result: {e}")
+            logger.warning(f"Failed to parse Zillow result: {e} | keys={list(item.keys())}")
             return None
 
     async def close(self) -> None:
