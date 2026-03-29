@@ -819,7 +819,7 @@ def generate_report(
         annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100 if fiveyr is not None else None
         pdf.subsection_title("Home Price Appreciation (Metro)")
         appre_buf = chart_appreciation(yoy, fiveyr, annualized)
-        pdf.embed_chart(appre_buf, width=100, caption="Source: FHFA House Price Index")
+        pdf.embed_chart(appre_buf, width=85, caption="Source: FHFA House Price Index")
     else:
         pdf.subsection_title("Home Price Appreciation")
         pdf.callout_box(
@@ -908,7 +908,7 @@ def generate_report(
         })
     if tier_chart_data:
         tiers_buf = chart_price_tiers(tier_chart_data)
-        pdf.embed_chart(tiers_buf, width=160)
+        pdf.embed_chart(tiers_buf, width=140)
 
     # Market commentary — LLM-powered when available, static fallback
     if market_commentary:
@@ -1004,7 +1004,7 @@ def generate_report(
         # Chart first, then compact table
         if len(zip_chart_data) >= 2:
             zip_buf = chart_zip_comparison(zip_chart_data)
-            pdf.embed_chart(zip_buf, width=150)
+            pdf.embed_chart(zip_buf, width=130)
 
         headers = ["Zip", "City", "Count", "Med. Price", "Med. $/SqFt", "Med. DOM"]
         widths = [18, 26, 14, 26, 24, 18]
@@ -1022,7 +1022,7 @@ def generate_report(
             price_bands, [l.price for l in listings if l.price > 0],
             xlabel="Price Range", title="Price Distribution",
         )
-        pdf.embed_chart(price_buf, width=155)
+        pdf.embed_chart(price_buf, width=135)
 
     # $/SqFt distribution chart
     if ppsf_vals:
@@ -1032,7 +1032,7 @@ def generate_report(
             xlabel="$/SqFt Range", title="Price per SqFt Distribution",
             color="#27AE60",
         )
-        pdf.embed_chart(ppsf_buf, width=155)
+        pdf.embed_chart(ppsf_buf, width=135)
 
     # --- Comparable Analysis (within neighborhood section) ---
     if target_price:
@@ -1087,7 +1087,7 @@ def generate_report(
             } for l in comps if l.sqft and l.price]
             if len(scatter_data) >= 2:
                 scatter_buf = chart_comp_scatter(scatter_data, target_price)
-                pdf.embed_chart(scatter_buf, width=155)
+                pdf.embed_chart(scatter_buf, width=135)
 
             # Comp table with status, list + sold price
             comp_headers = ["Status", "Address", "List", "Sold*", "Beds", "SqFt", "$/SqFt", "DOM"]

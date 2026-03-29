@@ -74,7 +74,7 @@ def chart_distribution(
     xlabel: str = "Range",
     title: str = "Distribution",
     color: str = BLUE,
-    figsize: tuple[float, float] = (5.5, 2.2),
+    figsize: tuple[float, float] = (4.8, 1.9),
 ) -> io.BytesIO:
     """Bar chart for price or $/sqft distribution.
 
@@ -120,7 +120,7 @@ def chart_distribution(
 
 def chart_price_tiers(
     tiers: list[dict],
-    figsize: tuple[float, float] = (5.5, 2.5),
+    figsize: tuple[float, float] = (4.8, 2.1),
 ) -> io.BytesIO:
     """Combo bar+line chart: listing count per tier (bars) + median DOM (line).
 
@@ -170,7 +170,7 @@ def chart_price_tiers(
 
 def chart_zip_comparison(
     zip_data: list[dict],
-    figsize: tuple[float, float] = (5.5, 2.5),
+    figsize: tuple[float, float] = (4.8, 2.1),
 ) -> io.BytesIO:
     """Horizontal bar chart comparing zip codes by median price.
 
@@ -210,7 +210,7 @@ def chart_zip_comparison(
 def chart_comp_scatter(
     comps: list[dict],
     target_price: int | None = None,
-    figsize: tuple[float, float] = (5.5, 2.8),
+    figsize: tuple[float, float] = (4.8, 2.4),
 ) -> io.BytesIO:
     """Scatter plot of comps: sqft vs price, colored by status.
 
@@ -260,6 +260,8 @@ def chart_comp_scatter(
     ax.set_ylabel("Price", fontsize=7)
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(_compact_price))
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.tick_params(axis="both", labelsize=6)
+    ax.grid(axis="both", alpha=0.2, linewidth=0.5)
     ax.set_title("Comparable Properties: Price vs Size", fontsize=TITLE_SIZE, color=NAVY, pad=8)
     ax.legend(fontsize=6, loc="upper left", framealpha=0.8)
 
@@ -270,7 +272,7 @@ def chart_appreciation(
     yoy: float | None,
     five_yr: float | None,
     annualized: float | None = None,
-    figsize: tuple[float, float] = (3.5, 1.8),
+    figsize: tuple[float, float] = (3.2, 1.6),
 ) -> io.BytesIO:
     """Horizontal bar chart for appreciation percentages."""
     _setup_style()
