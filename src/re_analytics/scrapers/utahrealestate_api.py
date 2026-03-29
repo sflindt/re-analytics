@@ -29,7 +29,12 @@ PROPERTY_TYPE_MAP = {
 SELECT_FIELDS = [
     "ListingKey",
     "ListPrice",
+    "OriginalListPrice",
+    "ClosePrice",
+    "CloseDate",
+    "ListDate",
     "LivingArea",
+    "LotSizeArea",
     "BedroomsTotal",
     "BathroomsTotalInteger",
     "NumberOfUnitsTotal",
@@ -46,7 +51,10 @@ SELECT_FIELDS = [
     "City",
     "StateOrProvince",
     "PostalCode",
+    "Latitude",
+    "Longitude",
     "ListingId",
+    "AssociationFee",
 ]
 
 
@@ -75,9 +83,12 @@ class UtahRealEstateAPI(BaseScraper):
             )
         return self.client
 
-    def _build_filter(self, criteria: SearchCriteria) -> str:
+    def _build_filter(self, criteria: SearchCriteria, include_sold: bool = False) -> str:
         filters = []
-        filters.append("StandardStatus eq 'Active'")
+        if include_sold:
+            filters.append("(StandardStatus eq 'Active' or StandardStatus eq 'Closed')")
+        else:
+            filters.append("StandardStatus eq 'Active'")
         filters.append(f"City eq '{criteria.city}'")
         filters.append(f"ListPrice ge {criteria.min_price}")
         filters.append(f"ListPrice le {criteria.max_price}")
@@ -153,6 +164,15 @@ class UtahRealEstateAPI(BaseScraper):
             listing_url=listing_url,
             source=self.name,
             mls_number=str(listing_id) if listing_id else None,
+            latitude=_float_or_none(item.get("Latitude")),
+            longitude=_float_or_none(item.get("Longitude")),
+            status=item.get("StandardStatus"),
+            original_list_price=_int_or_none(item.get("OriginalListPrice")),
+            sold_price=_int_or_none(item.get("ClosePrice")),
+            sale_date=item.get("CloseDate"),
+            list_date=item.get("ListDate"),
+            lot_size=_float_or_none(item.get("LotSizeArea")),
+            hoa_fees=_float_or_none(item.get("AssociationFee")),
         )
 
     async def close(self) -> None:

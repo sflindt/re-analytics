@@ -6,12 +6,14 @@ import logging
 
 from rich.console import Console
 
+from re_analytics.cache import get_cached, set_cached
 from re_analytics.models import InvestmentParams, Listing, SearchCriteria
 from re_analytics.scrapers.base import BaseScraper
 from re_analytics.scrapers.utahrealestate_api import UtahRealEstateAPI
 from re_analytics.scrapers.utahrealestate_web import UtahRealEstateWebScraper
 from re_analytics.scrapers.redfin import RedfinScraper
 from re_analytics.scrapers.zillow import ZillowScraper
+from re_analytics.scrapers.zillow_browser import ZillowBrowserScraper
 from re_analytics.scrapers.rentcast import RentcastEnricher
 
 logger = logging.getLogger(__name__)
@@ -21,15 +23,23 @@ console = Console()
 UTAH_STATES = {"UT"}
 
 
-async def find_listings(criteria: SearchCriteria, debug: bool = False) -> list[Listing]:
+async def find_listings(
+    criteria: SearchCriteria, debug: bool = False, use_cache: bool = True, cache_ttl: int = 3600
+) -> list[Listing]:
     """Find listings matching criteria using the best available scrapers.
 
     Source routing:
-      Utah: UtahRealEstate API (if configured) → UtahRealEstate Web → Zillow (pyzill) → Redfin
-      Other: Zillow (pyzill) → Redfin
+      Utah: UtahRealEstate API (if configured) → UtahRealEstate Web → Zillow → Redfin
+      Other: Zillow → Redfin
 
     If specific sources are requested in criteria.sources, only those are used.
     """
+    if use_cache:
+        cached = get_cached(criteria, ttl=cache_ttl)
+        if cached is not None:
+            console.print(f"  [dim]Using cached results ({len(cached)} listings)[/dim]")
+            return cached
+
     scrapers: list[BaseScraper] = _select_scrapers(criteria)
     all_listings: list[Listing] = []
 
@@ -62,6 +72,9 @@ async def find_listings(criteria: SearchCriteria, debug: bool = False) -> list[L
         finally:
             await enricher.close()
 
+    if use_cache and deduped:
+        set_cached(criteria, deduped)
+
     return deduped
 
 
@@ -73,6 +86,7 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
             "utahrealestate-web": UtahRealEstateWebScraper,
             "redfin": RedfinScraper,
             "zillow": ZillowScraper,
+            "zillow-browser": ZillowBrowserScraper,
         }
         return [source_map[s]() for s in criteria.sources if s in source_map]
 
@@ -87,8 +101,12 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
         # Web scraper as fallback for Utah
         scrapers.append(UtahRealEstateWebScraper())
 
-    # Zillow via pyzill (primary nationwide source)
-    scrapers.append(ZillowScraper())
+    # Zillow: try Playwright (free) first, Scrapfly as fallback
+    try:
+        import playwright  # noqa: F401
+        scrapers.append(ZillowBrowserScraper())
+    except ImportError:
+        scrapers.append(ZillowScraper())
 
     # Redfin as additional source
     scrapers.append(RedfinScraper())

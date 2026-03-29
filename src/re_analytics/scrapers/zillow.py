@@ -409,6 +409,25 @@ class ZillowScraper(BaseScraper):
             if not address and not price:
                 return None
 
+            # Status mapping
+            status_map = {
+                "FOR_SALE": "Active",
+                "RECENTLY_SOLD": "Sold",
+                "PENDING": "Pending",
+                "FOR_RENT": "For Rent",
+            }
+            raw_status = item.get("statusType", "")
+            status = status_map.get(raw_status, raw_status)
+
+            # Sold price (available for recently sold)
+            sold_price = home_info.get("soldPrice") or home_info.get("lastSoldPrice")
+
+            # Year built
+            year_built = home_info.get("yearBuilt")
+
+            # Lot size
+            lot_size = home_info.get("lotAreaValue") or home_info.get("lotSize")
+
             return Listing(
                 address=address,
                 city=home_info.get("city") or item.get("addressCity") or criteria.city,
@@ -429,6 +448,11 @@ class ZillowScraper(BaseScraper):
                 latitude=home_info.get("latitude") or item.get("latLong", {}).get("latitude"),
                 longitude=home_info.get("longitude") or item.get("latLong", {}).get("longitude"),
                 days_on_market=days_on_zillow,
+                status=status,
+                sold_price=int(sold_price) if sold_price else None,
+                year_built=int(year_built) if year_built else None,
+                lot_size=float(lot_size) if lot_size else None,
+                list_date=home_info.get("datePostedString") or home_info.get("timeOnZillow"),
             )
         except Exception as e:
             logger.warning(f"Failed to parse Zillow result: {e} | keys={list(item.keys())}")

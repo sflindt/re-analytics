@@ -148,6 +148,32 @@ class Listing:
     latitude: float | None = None
     longitude: float | None = None
 
+    # Agent analytics fields
+    status: str | None = None  # Active, Sold, Pending, etc.
+    original_list_price: int | None = None
+    sold_price: int | None = None
+    sale_date: str | None = None  # ISO 8601
+    list_date: str | None = None  # ISO 8601
+    lot_size: float | None = None  # sqft
+    hoa_fees: float | None = None  # monthly
+
+    @property
+    def sale_to_list_ratio(self) -> float | None:
+        """Sold price / original list price. < 1.0 means sold below ask."""
+        sell = self.sold_price or 0
+        ask = self.original_list_price or self.price or 0
+        if sell > 0 and ask > 0:
+            return round(sell / ask, 3)
+        return None
+
+    @property
+    def price_reduction(self) -> int | None:
+        """Original list price minus current price (positive = price dropped)."""
+        if self.original_list_price and self.price:
+            diff = self.original_list_price - self.price
+            return diff if diff != 0 else None
+        return None
+
     @property
     def price_per_sqft(self) -> float | None:
         if self.price and self.sqft:
@@ -214,6 +240,8 @@ class Listing:
         d["price_per_sqft"] = self.price_per_sqft
         d["cap_rate"] = self.cap_rate
         d["grm"] = self.grm
+        d["sale_to_list_ratio"] = self.sale_to_list_ratio
+        d["price_reduction"] = self.price_reduction
         d["rent_estimate"] = self.rent_estimate(p.per_bed_rent)
         d["rent_multiplier"] = self.rent_multiplier(p.per_bed_rent)
         d["monthly_taxes"] = round(self.monthly_taxes(), 2)
@@ -243,10 +271,12 @@ def listings_to_csv(listings: list[Listing], params: InvestmentParams | None = N
         return ""
     p = params or InvestmentParams()
     fieldnames = [
-        "zpid", "property_type", "address", "zip_code", "city", "state",
-        "latitude", "longitude", "listing_url", "price", "bedrooms", "bathrooms",
-        "sqft", "zestimate", "rent_zestimate", "tax_assessed_value",
-        "days_on_market", "num_units", "gross_income", "noi",
+        "zpid", "status", "property_type", "address", "zip_code", "city", "state",
+        "latitude", "longitude", "listing_url", "price", "original_list_price",
+        "sold_price", "sale_to_list_ratio", "price_reduction",
+        "bedrooms", "bathrooms", "sqft", "lot_size", "year_built",
+        "zestimate", "rent_zestimate", "tax_assessed_value", "hoa_fees",
+        "days_on_market", "list_date", "sale_date", "num_units", "gross_income", "noi",
         "price_per_sqft", "rent_multiplier", "monthly_taxes", "monthly_insurance",
         "monthly_pmt", "monthly_piti", "cap_rate", "grm",
         "rent_estimate", "required_down_payment",

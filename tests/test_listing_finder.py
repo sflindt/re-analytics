@@ -54,14 +54,14 @@ class TestSelectScrapers:
         scrapers = _select_scrapers(criteria)
         names = [s.name for s in scrapers]
         assert "utahrealestate-web" in names
-        assert "zillow" in names
+        assert any("zillow" in n for n in names)
         assert "redfin" in names
 
     def test_non_utah_uses_zillow_and_redfin(self):
         criteria = SearchCriteria(city="Phoenix", state="AZ")
         scrapers = _select_scrapers(criteria)
         names = [s.name for s in scrapers]
-        assert "zillow" in names
+        assert any("zillow" in n for n in names)
         assert "redfin" in names
         assert "utahrealestate-web" not in names
         assert "utahrealestate-api" not in names
