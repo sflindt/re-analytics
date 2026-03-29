@@ -101,12 +101,8 @@ def _select_scrapers(criteria: SearchCriteria) -> list[BaseScraper]:
         # Web scraper as fallback for Utah
         scrapers.append(UtahRealEstateWebScraper())
 
-    # Zillow: try Playwright (free) first, Scrapfly as fallback
-    try:
-        import playwright  # noqa: F401
-        scrapers.append(ZillowBrowserScraper())
-    except ImportError:
-        scrapers.append(ZillowScraper())
+    # Zillow via Scrapfly (reliable) — use --source zillow-browser for Playwright
+    scrapers.append(ZillowScraper())
 
     # Redfin as additional source
     scrapers.append(RedfinScraper())
