@@ -1,4 +1,7 @@
-"""Zillow listing scraper using pyzill (curl_cffi for Chrome impersonation).
+"""Zillow listing scraper via Scrapfly API (bypasses PerimeterX).
+
+Routes Zillow search requests through Scrapfly's anti-bot proxy.
+Falls back to direct pyzill if no SCRAPFLY_API_KEY is configured.
 
 Uses bounding-box search via geopy, matching the user's proven notebook approach.
 Extracts all fields needed for investment analysis.
@@ -6,21 +9,26 @@ Extracts all fields needed for investment analysis.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
+import urllib.parse
 
+import httpx
 from geopy import Point
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
-
-from pyzill.search import search as pyzill_search
 
 from re_analytics.models import Listing, PropertyType, SearchCriteria
 from re_analytics.scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-# Pre-computed city centers for major Utah cities (from user's notebook + additions)
+SCRAPFLY_BASE = "https://api.scrapfly.io/scrape"
+ZILLOW_SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
+
+# Pre-computed city centers for major cities
 CITY_COORDS: dict[str, tuple[float, float]] = {
     # Salt Lake County
     "salt lake city": (40.7608, -111.8910),
@@ -160,10 +168,91 @@ def _geocode_city(city: str, state: str) -> tuple[float, float] | None:
     return None
 
 
+def _build_zillow_body(
+    search_value: str,
+    ne_lat: float,
+    ne_long: float,
+    sw_lat: float,
+    sw_long: float,
+    filter_state: dict,
+    page: int,
+    min_price: int | None = None,
+    max_price: int | None = None,
+) -> dict:
+    """Build the JSON body for Zillow's async-create-search-page-state endpoint."""
+    fs = filter_state.copy()
+    if min_price is not None:
+        fs["price"] = {"min": min_price}
+    if max_price is not None:
+        fs.setdefault("price", {})["max"] = max_price
+
+    return {
+        "searchQueryState": {
+            "isMapVisible": True,
+            "isListVisible": True,
+            "mapBounds": {
+                "north": ne_lat,
+                "east": ne_long,
+                "south": sw_lat,
+                "west": sw_long,
+            },
+            "filterState": fs,
+            "mapZoom": 1,
+            "pagination": {"currentPage": page},
+            "usersSearchTerm": search_value,
+        },
+        "wants": {
+            "cat1": ["listResults", "mapResults"],
+            "cat2": ["total"],
+        },
+        "requestId": page,
+        "isDebugRequest": False,
+    }
+
+
 class ZillowScraper(BaseScraper):
-    """Scraper using pyzill (curl_cffi Chrome impersonation)."""
+    """Scraper using Scrapfly API to bypass Zillow's PerimeterX protection."""
 
     name = "zillow"
+
+    def __init__(self, debug: bool = False):
+        self.debug = debug
+        self._api_key = os.environ.get("SCRAPFLY_API_KEY", "")
+        self._client = httpx.AsyncClient(timeout=60.0)
+
+    async def _scrapfly_zillow_search(self, body: dict) -> dict:
+        """Send a Zillow search request via Scrapfly API."""
+        params = {
+            "key": self._api_key,
+            "url": ZILLOW_SEARCH_URL,
+            "asp": "true",
+            "render_js": "false",
+            "method": "PUT",
+            "headers[Content-Type]": "application/json",
+            "headers[Accept]": "*/*",
+            "headers[Origin]": "https://www.zillow.com",
+            "body": json.dumps(body),
+            "country": "us",
+        }
+        resp = await self._client.get(SCRAPFLY_BASE, params=params)
+        resp.raise_for_status()
+        scrapfly_data = resp.json()
+
+        # Scrapfly wraps the response — the actual content is in result.content
+        content = scrapfly_data.get("result", {}).get("content", "")
+        if not content:
+            raise ValueError("Scrapfly returned empty content")
+
+        return json.loads(content)
+
+    async def _pyzill_fallback(self, body_args: dict) -> dict:
+        """Try direct pyzill as fallback (works if curl_cffi isn't blocked)."""
+        try:
+            from pyzill.search import search as pyzill_search
+            return pyzill_search(**body_args)
+        except Exception as e:
+            logger.debug(f"pyzill fallback failed: {e}")
+            raise
 
     async def search(self, criteria: SearchCriteria) -> list[Listing]:
         city_key = criteria.city.strip().lower()
@@ -183,8 +272,6 @@ class ZillowScraper(BaseScraper):
 
         filter_state = FILTER_MAP.get(criteria.property_type, ALL_HOMES_FILTER).copy()
 
-        # Only set price in filter_state if user specified limits
-        # (pyzill adds beds/baths/price to filter_state if not None)
         min_price_arg = criteria.min_price if criteria.min_price > 0 else None
         max_price_arg = criteria.max_price if criteria.max_price < 999_999_999 else None
 
@@ -192,40 +279,69 @@ class ZillowScraper(BaseScraper):
         unique_zpids: set[str] = set()
         all_listings: list[Listing] = []
 
+        use_scrapfly = bool(self._api_key)
+        if not use_scrapfly:
+            logger.warning(
+                "SCRAPFLY_API_KEY not set — falling back to direct pyzill. "
+                "This will likely fail due to PerimeterX bot detection. "
+                "Sign up for a free key at https://scrapfly.io"
+            )
+
         for page in range(1, MAX_PAGES + 1):
             if self.debug:
                 logger.debug(
-                    f"Zillow pyzill search page {page}: {search_value} "
-                    f"bbox=({ne_lat:.4f},{ne_long:.4f},{sw_lat:.4f},{sw_long:.4f})"
+                    f"Zillow search page {page}: {search_value} "
+                    f"bbox=({ne_lat:.4f},{ne_long:.4f},{sw_lat:.4f},{sw_long:.4f}) "
+                    f"via={'scrapfly' if use_scrapfly else 'pyzill'}"
                 )
 
             try:
-                data = pyzill_search(
-                    pagination=page,
-                    search_value=search_value,
-                    min_beds=None,
-                    max_beds=None,
-                    min_bathrooms=None,
-                    max_bathrooms=None,
-                    min_price=min_price_arg,
-                    max_price=max_price_arg,
-                    ne_lat=ne_lat,
-                    ne_long=ne_long,
-                    sw_lat=sw_lat,
-                    sw_long=sw_long,
-                    zoom_value=1,
-                    filter_state=filter_state,
-                )
+                if use_scrapfly:
+                    body = _build_zillow_body(
+                        search_value=search_value,
+                        ne_lat=ne_lat,
+                        ne_long=ne_long,
+                        sw_lat=sw_lat,
+                        sw_long=sw_long,
+                        filter_state=filter_state,
+                        page=page,
+                        min_price=min_price_arg,
+                        max_price=max_price_arg,
+                    )
+                    data = await self._scrapfly_zillow_search(body)
+                else:
+                    from pyzill.search import search as pyzill_search
+                    data = pyzill_search(
+                        pagination=page,
+                        search_value=search_value,
+                        min_beds=None,
+                        max_beds=None,
+                        min_bathrooms=None,
+                        max_bathrooms=None,
+                        min_price=min_price_arg,
+                        max_price=max_price_arg,
+                        ne_lat=ne_lat,
+                        ne_long=ne_long,
+                        sw_lat=sw_lat,
+                        sw_long=sw_long,
+                        zoom_value=1,
+                        filter_state=filter_state,
+                    )
             except Exception as e:
                 err_msg = str(e)
                 if "Expecting value" in err_msg or "JSONDecodeError" in type(e).__name__:
                     logger.warning(
                         f"Zillow returned empty/non-JSON response on page {page}. "
                         "This usually means rate limiting or bot detection. "
-                        "Try again in a few minutes or use a VPN."
+                        "Try again in a few minutes."
+                    )
+                elif "402" in err_msg or "Payment Required" in err_msg:
+                    logger.warning(
+                        "Scrapfly API credits exhausted. "
+                        "Sign up at https://scrapfly.io for more credits."
                     )
                 else:
-                    logger.warning(f"pyzill search failed on page {page}: {e}")
+                    logger.warning(f"Zillow search failed on page {page}: {e}")
                 break
 
             # Use mapResults (all listings up to 500) on first page,
@@ -310,4 +426,4 @@ class ZillowScraper(BaseScraper):
             return None
 
     async def close(self) -> None:
-        pass
+        await self._client.aclose()
