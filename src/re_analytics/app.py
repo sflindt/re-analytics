@@ -23,7 +23,7 @@ from re_analytics.models import (
 from re_analytics.listing_finder import find_listings
 from re_analytics.rates import get_current_rates, RateSnapshot
 from re_analytics.cache import list_cached, load_cached_file
-from re_analytics.report import generate_report
+from re_analytics.report import generate_report, _dynamic_buckets
 from re_analytics.demo_data import DEMO_LISTINGS, DEMO_CITY, DEMO_STATE, DEMO_RATES
 
 # Load .env
@@ -249,7 +249,10 @@ def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.Dat
             "Rent Mult": l.rent_multiplier(params.per_bed_rent),
             "PITI": round(l.monthly_piti(params), 0),
             "Year Built": l.year_built,
-            "Status": l.status,
+            "Status": "Sold" if l.sold_price and l.sold_price > 0
+                else "Active" if (l.status or "").upper().replace("_", " ") in ("ACTIVE", "FOR SALE", "")
+                else "Pending" if "PENDING" in (l.status or "").upper()
+                else (l.status or "Active"),
             "URL": l.listing_url,
             "Latitude": l.latitude,
             "Longitude": l.longitude,
@@ -555,37 +558,39 @@ with tab_market:
 
     with col_left:
         st.markdown("#### Price Tier Breakdown")
-        tiers = {
-            "Under $300K": [l for l in listings if l.price < 300_000],
-            "$300K - $500K": [l for l in listings if 300_000 <= l.price < 500_000],
-            "$500K - $1M": [l for l in listings if 500_000 <= l.price < 1_000_000],
-            "$1M+": [l for l in listings if l.price >= 1_000_000],
-        }
-
+        tier_buckets = _dynamic_buckets(price_vals, num_buckets=5)
         tier_rows = []
-        for tier, group in tiers.items():
+        for label, lo, hi in tier_buckets:
+            group = [l for l in listings if lo <= l.price < hi]
             if not group:
-                tier_rows.append({
-                    "Tier": tier, "Count": 0, "Med. DOM": None,
-                    "Med. $/SqFt": None, "Med. Price": None, "Med. SqFt": None,
-                })
                 continue
+            g_dom = [l.days_on_market for l in group if l.days_on_market is not None]
+            med_d = _median(g_dom) if g_dom else None
+            pace = ""
+            if med_d is not None:
+                if med_d < 14:
+                    pace = "Fast"
+                elif med_d < 30:
+                    pace = "Normal"
+                elif med_d < 60:
+                    pace = "Slow"
+                else:
+                    pace = "Stale"
             tier_rows.append({
-                "Tier": tier,
+                "Tier": label,
                 "Count": len(group),
-                "Med. DOM": _median([l.days_on_market for l in group if l.days_on_market]),
+                "Med. DOM": med_d,
+                "Pace": pace,
                 "Med. $/SqFt": _median([l.price_per_sqft for l in group if l.price_per_sqft]),
                 "Med. Price": _median([l.price for l in group if l.price > 0]),
-                "Med. SqFt": _median([l.sqft for l in group if l.sqft]),
             })
 
         tier_df = pd.DataFrame(tier_rows)
         st.dataframe(
             tier_df.style.format({
-                "Med. DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "—",
-                "Med. $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "—",
-                "Med. Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "—",
-                "Med. SqFt": lambda x: f"{x:,.0f}" if pd.notna(x) else "—",
+                "Med. DOM": lambda x: f"{x:.0f}" if pd.notna(x) else "-",
+                "Med. $/SqFt": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
+                "Med. Price": lambda x: f"${x:,.0f}" if pd.notna(x) else "-",
             }),
             use_container_width=True,
             hide_index=True,
@@ -595,16 +600,12 @@ with tab_market:
         st.markdown("#### Price Distribution")
         prices = [l.price for l in listings if l.price > 0]
         if prices:
-            # Create readable price buckets (e.g. "$500K", "$600K")
-            bucket_size = max(50_000, round((max(prices) - min(prices)) / 12 / 50_000) * 50_000) or 100_000
+            p_buckets = _dynamic_buckets(prices, num_buckets=6)
             price_buckets = {}
-            for p in prices:
-                bucket = (p // bucket_size) * bucket_size
-                if bucket >= 1_000_000:
-                    label = f"${bucket / 1_000_000:.1f}M"
-                else:
-                    label = f"${int(bucket / 1000)}K"
-                price_buckets[label] = price_buckets.get(label, 0) + 1
+            for label, lo, hi in p_buckets:
+                count = len([p for p in prices if lo <= p < hi])
+                if count > 0:
+                    price_buckets[label] = count
             chart_df = pd.DataFrame({"Price Range": list(price_buckets.keys()), "Count": list(price_buckets.values())})
             st.bar_chart(chart_df.set_index("Price Range"))
 
@@ -617,13 +618,12 @@ with tab_market:
         st.markdown("#### $/SqFt Distribution")
         ppsf_data = [l.price_per_sqft for l in listings if l.price_per_sqft]
         if ppsf_data:
-            # Create readable $/sqft buckets (e.g. "$200", "$250")
-            bucket_size = max(25, round((max(ppsf_data) - min(ppsf_data)) / 10 / 25) * 25) or 50
+            ppsf_b = _dynamic_buckets(ppsf_data, num_buckets=6)
             ppsf_buckets = {}
-            for v in ppsf_data:
-                bucket = int((v // bucket_size) * bucket_size)
-                label = f"${bucket}"
-                ppsf_buckets[label] = ppsf_buckets.get(label, 0) + 1
+            for label, lo, hi in ppsf_b:
+                count = len([v for v in ppsf_data if lo <= v < hi])
+                if count > 0:
+                    ppsf_buckets[label] = count
             ppsf_chart = pd.DataFrame({"$/SqFt Range": list(ppsf_buckets.keys()), "Count": list(ppsf_buckets.values())})
             st.bar_chart(ppsf_chart.set_index("$/SqFt Range"))
         else:
@@ -1133,8 +1133,12 @@ if tab_neighborhood is not None:
         for zc, group in sorted(zip_groups.items()):
             ls = [g[0] for g in group]
             sc = [g[1] for g in group]
+            # Primary city for this zip
+            zip_cities = [l.city for l in ls if l.city]
+            primary_city = max(set(zip_cities), key=zip_cities.count) if zip_cities else "-"
             zip_rows.append({
                 "Zip Code": zc,
+                "City": primary_city,
                 "Count": len(ls),
                 "Median Price": _median([l.price for l in ls if l.price > 0]),
                 "Median $/SqFt": _median([l.price_per_sqft for l in ls if l.price_per_sqft]),
