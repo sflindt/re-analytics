@@ -851,15 +851,28 @@ def generate_report(
             pdf.multi_cell(0, 3, fn, new_x="LMARGIN", new_y="NEXT")
             pdf.ln(1)
 
-    # Home price appreciation
+    # Home price appreciation — metro vs national side-by-side
     if appreciation and (appreciation.get("yoy_pct") or appreciation.get("five_yr_pct")):
         yoy = appreciation.get("yoy_pct")
         fiveyr = appreciation.get("five_yr_pct")
         annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100 if fiveyr is not None else None
         metro_label = appreciation.get("metro_label", "Metro")
-        pdf.subsection_title(f"Home Price Appreciation ({metro_label})")
-        appre_buf = chart_appreciation(yoy, fiveyr, annualized, title=f"Home Price Appreciation — {metro_label}")
-        pdf.embed_chart(appre_buf, width=85, caption="Source: FHFA House Price Index")
+        pdf.subsection_title("Home Price Appreciation")
+        metro_buf = chart_appreciation(yoy, fiveyr, annualized, title=metro_label)
+
+        # National comparison chart
+        national = appreciation.get("national")
+        national_buf = None
+        if national and (national.get("yoy_pct") or national.get("five_yr_pct")):
+            n_yoy = national.get("yoy_pct")
+            n_fiveyr = national.get("five_yr_pct")
+            n_annualized = national.get("annualized")
+            national_buf = chart_appreciation(n_yoy, n_fiveyr, n_annualized, title="U.S. National")
+
+        if national_buf:
+            pdf.embed_chart_pair(metro_buf, national_buf, width=82, caption="Source: FHFA House Price Index")
+        else:
+            pdf.embed_chart(metro_buf, width=85, caption="Source: FHFA House Price Index")
     else:
         pdf.subsection_title("Home Price Appreciation")
         pdf.callout_box(

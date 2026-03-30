@@ -1439,6 +1439,37 @@ if tab_neighborhood is not None:
             st.caption(f"Source: U.S. Census Bureau Population Estimates ({pop_data.get('name', '')})")
             st.markdown("---")
 
+        # Metro vs National appreciation comparison
+        appre = st.session_state.appreciation
+        if appre and (appre.get("yoy_pct") or appre.get("five_yr_pct")):
+            metro_label = appre.get("metro_label", "Metro")
+            national = appre.get("national")
+            if national and (national.get("yoy_pct") or national.get("five_yr_pct")):
+                col_metro, col_natl = st.columns(2)
+                with col_metro:
+                    st.markdown(f"**{metro_label}**")
+                    if appre.get("yoy_pct") is not None:
+                        st.metric("1-Year HPA", f"{appre['yoy_pct']:+.1f}%")
+                    if appre.get("five_yr_pct") is not None:
+                        st.metric("5-Year HPA", f"{appre['five_yr_pct']:+.1f}%")
+                with col_natl:
+                    st.markdown("**U.S. National**")
+                    if national.get("yoy_pct") is not None:
+                        st.metric("1-Year HPA", f"{national['yoy_pct']:+.1f}%")
+                    if national.get("five_yr_pct") is not None:
+                        st.metric("5-Year HPA", f"{national['five_yr_pct']:+.1f}%")
+                st.caption("Source: FHFA House Price Index via FRED")
+                st.markdown("---")
+            else:
+                st.markdown(f"**{metro_label} Home Price Appreciation**")
+                m_cols = st.columns(3)
+                if appre.get("yoy_pct") is not None:
+                    m_cols[0].metric("1-Year", f"{appre['yoy_pct']:+.1f}%")
+                if appre.get("five_yr_pct") is not None:
+                    m_cols[1].metric("5-Year Total", f"{appre['five_yr_pct']:+.1f}%")
+                st.caption("Source: FHFA House Price Index via FRED")
+                st.markdown("---")
+
         zip_appre = st.session_state.zip_appreciation or {}
         zip_rows = []
         for zc, group in sorted(zip_groups.items()):

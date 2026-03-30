@@ -292,64 +292,87 @@ def _get_cbsa(city: str, state: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-async def fetch_appreciation_fred(api_key: str | None = None, city: str = "", state: str = "") -> dict:
-    """Fetch FHFA House Price Index for a metro from FRED.
-
-    Dynamically looks up the CBSA code for the given city/state.
-    Falls back to national index (USSTHPI) if no metro match found.
-    """
-    cbsa, metro_name = _get_cbsa(city, state) if city else (None, None)
-    if cbsa:
-        series_id = f"ATNHPIUS{cbsa}Q"
-        metro_label = f"{metro_name} Metro"
-    else:
-        series_id = "USSTHPI"  # National index fallback
-        metro_label = "U.S. National"
-    result: dict = {"yoy_pct": None, "five_yr_pct": None, "values": [], "metro_label": metro_label}
-
+async def _fetch_hpi_series(client, series_id: str, api_key: str | None) -> dict:
+    """Fetch a single FHFA HPI series and compute appreciation."""
+    result: dict = {"yoy_pct": None, "five_yr_pct": None, "values": []}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            params = {
-                "series_id": series_id,
-                "sort_order": "desc",
-                "limit": "25",  # ~6 years of quarterly data
-                "file_type": "json",
-            }
-            if api_key:
-                params["api_key"] = api_key
+        params = {
+            "series_id": series_id,
+            "sort_order": "desc",
+            "limit": "25",
+            "file_type": "json",
+        }
+        if api_key:
+            params["api_key"] = api_key
 
-            resp = await client.get(FRED_API_URL, params=params)
-            if resp.status_code != 200:
-                logger.warning(f"FRED API returned {resp.status_code}: {resp.text[:200]}")
-                return result
+        resp = await client.get(FRED_API_URL, params=params)
+        if resp.status_code != 200:
+            logger.warning(f"FRED API returned {resp.status_code} for {series_id}: {resp.text[:200]}")
+            return result
 
-            data = resp.json()
-            observations = data.get("observations", [])
-            values = []
-            for obs in observations:
-                val = obs.get("value", ".")
-                if val != ".":
-                    values.append({"date": obs.get("date"), "value": float(val)})
+        data = resp.json()
+        observations = data.get("observations", [])
+        values = []
+        for obs in observations:
+            val = obs.get("value", ".")
+            if val != ".":
+                values.append({"date": obs.get("date"), "value": float(val)})
 
-            if len(values) >= 5:
-                # YoY: latest vs ~4 quarters ago
-                latest = values[0]["value"]
-                yoy_ref = values[4]["value"]  # ~1 year back
-                if yoy_ref > 0:
-                    result["yoy_pct"] = round((latest - yoy_ref) / yoy_ref * 100, 1)
+        if len(values) >= 5:
+            latest = values[0]["value"]
+            yoy_ref = values[4]["value"]
+            if yoy_ref > 0:
+                result["yoy_pct"] = round((latest - yoy_ref) / yoy_ref * 100, 1)
 
-            if len(values) >= 21:
-                # 5-year: latest vs ~20 quarters ago
-                latest = values[0]["value"]
-                fiveyr_ref = values[20]["value"]
-                if fiveyr_ref > 0:
-                    result["five_yr_pct"] = round((latest - fiveyr_ref) / fiveyr_ref * 100, 1)
+        if len(values) >= 21:
+            latest = values[0]["value"]
+            fiveyr_ref = values[20]["value"]
+            if fiveyr_ref > 0:
+                result["five_yr_pct"] = round((latest - fiveyr_ref) / fiveyr_ref * 100, 1)
 
-            result["values"] = values[:8]  # Keep last 2 years for display
+        result["values"] = values[:8]
 
     except Exception as e:
-        logger.warning(f"FHFA HPI fetch failed: {e}")
+        logger.warning(f"FHFA HPI series {series_id} failed: {e}")
 
+    return result
+
+
+async def fetch_appreciation_fred(api_key: str | None = None, city: str = "", state: str = "") -> dict:
+    """Fetch FHFA HPI for both the local metro and the U.S. national index.
+
+    Returns dict with metro-level data at top level and national data in
+    a 'national' sub-dict, enabling side-by-side comparison.
+    """
+    cbsa, metro_name = _get_cbsa(city, state) if city else (None, None)
+    is_metro = cbsa is not None
+    if is_metro:
+        metro_series = f"ATNHPIUS{cbsa}Q"
+        metro_label = f"{metro_name} Metro"
+    else:
+        metro_series = "USSTHPI"
+        metro_label = "U.S. National"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        metro_result = await _fetch_hpi_series(client, metro_series, api_key)
+
+        # Also fetch national for side-by-side when we have a metro
+        national_result = None
+        if is_metro:
+            national_result = await _fetch_hpi_series(client, "USSTHPI", api_key)
+
+    result = {**metro_result, "metro_label": metro_label}
+    if national_result:
+        national_annualized = None
+        if national_result.get("five_yr_pct") is not None:
+            national_annualized = round(
+                ((1 + national_result["five_yr_pct"] / 100) ** 0.2 - 1) * 100, 1
+            )
+        result["national"] = {
+            **national_result,
+            "metro_label": "U.S. National",
+            "annualized": national_annualized,
+        }
     return result
 
 
