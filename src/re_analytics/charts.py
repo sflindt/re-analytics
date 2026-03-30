@@ -74,7 +74,7 @@ def chart_distribution(
     xlabel: str = "Range",
     title: str = "Distribution",
     color: str = BLUE,
-    figsize: tuple[float, float] = (4.8, 1.9),
+    figsize: tuple[float, float] = (3.5, 1.8),
 ) -> io.BytesIO:
     """Bar chart for price or $/sqft distribution.
 
@@ -264,6 +264,7 @@ def chart_comp_scatter(
     ax.grid(axis="both", alpha=0.2, linewidth=0.5)
     ax.set_title("Comparable Properties: Price vs Size", fontsize=TITLE_SIZE, color=NAVY, pad=8)
     ax.legend(fontsize=6, loc="upper left", framealpha=0.8)
+    fig.subplots_adjust(bottom=0.18)
 
     return _fig_to_bytes(fig)
 

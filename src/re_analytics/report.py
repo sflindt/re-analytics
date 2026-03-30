@@ -370,6 +370,32 @@ class REReport(FPDF):
             self.cell(0, 3, caption, new_x="LMARGIN", new_y="NEXT", align="C")
             self.ln(2)
 
+    def embed_chart_pair(self, left_buf, right_buf, width: float = 82, caption: str = ""):
+        """Embed two charts side-by-side in the PDF."""
+        bufs = [b for b in (left_buf, right_buf) if b is not None and b.getvalue() != b""]
+        if not bufs:
+            return
+        height = width * 0.50
+        if self.get_y() + height + 10 > self.h - 25:
+            self.add_page()
+        gap = 4
+        total = width * 2 + gap
+        x_left = (self.w - total) / 2
+        x_right = x_left + width + gap
+        y = self.get_y()
+        if len(bufs) == 2:
+            self.image(bufs[0], x=x_left, y=y, w=width)
+            self.image(bufs[1], x=x_right, y=y, w=width)
+        else:
+            # Only one chart — center it
+            self.image(bufs[0], x=(self.w - width) / 2, y=y, w=width)
+        self.set_y(y + height + 6)
+        if caption:
+            self.set_font("Helvetica", "I", 6)
+            self.set_text_color(*LIGHT_TEXT)
+            self.cell(0, 3, caption, new_x="LMARGIN", new_y="NEXT", align="C")
+            self.ln(2)
+
     def horizontal_gauge(self, label: str, value: float, lo: float, hi: float,
                          color: tuple = BLUE, width: float = 120):
         """Draw a horizontal gauge bar showing where a value sits in a range."""
@@ -1015,16 +1041,15 @@ def generate_report(
             aligns.append("C")
         pdf.styled_table(headers, zip_rows, widths, aligns)
 
-    # Price distribution chart (replaces "#" bar table)
+    # Price + $/SqFt distribution charts (side-by-side)
+    price_buf = None
+    ppsf_buf = None
     if price_vals:
         price_bands = _dynamic_buckets(price_vals, num_buckets=6)
         price_buf = chart_distribution(
             price_bands, [l.price for l in listings if l.price > 0],
             xlabel="Price Range", title="Price Distribution",
         )
-        pdf.embed_chart(price_buf, width=135)
-
-    # $/SqFt distribution chart
     if ppsf_vals:
         ppsf_bands = _dynamic_buckets(ppsf_vals, num_buckets=6)
         ppsf_buf = chart_distribution(
@@ -1032,7 +1057,8 @@ def generate_report(
             xlabel="$/SqFt Range", title="Price per SqFt Distribution",
             color="#27AE60",
         )
-        pdf.embed_chart(ppsf_buf, width=135)
+    if price_buf or ppsf_buf:
+        pdf.embed_chart_pair(price_buf, ppsf_buf, width=82)
 
     # --- Comparable Analysis (within neighborhood section) ---
     if target_price:
