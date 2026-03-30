@@ -149,6 +149,7 @@ async def fetch_appreciation_fred(api_key: str | None = None) -> dict:
 
             resp = await client.get(FRED_API_URL, params=params)
             if resp.status_code != 200:
+                logger.warning(f"FRED API returned {resp.status_code}: {resp.text[:200]}")
                 return result
 
             data = resp.json()
@@ -176,7 +177,7 @@ async def fetch_appreciation_fred(api_key: str | None = None) -> dict:
             result["values"] = values[:8]  # Keep last 2 years for display
 
     except Exception as e:
-        logger.debug(f"FHFA HPI fetch failed: {e}")
+        logger.warning(f"FHFA HPI fetch failed: {e}")
 
     return result
 

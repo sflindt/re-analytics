@@ -804,22 +804,26 @@ def generate_report(
         ("Median DOM", f"{_median(dom_vals):.0f} days" if dom_vals else "N/A"),
     ])
 
-    # Row 2: Rate metrics
+    # Rate gauges (visual only — no redundant metric cards)
     if rates and rates.mortgage_30yr:
-        pdf.metric_cards([
-            ("30-Yr Mortgage", f"{rates.mortgage_30yr:.2f}%"),
-            ("15-Yr Mortgage", f"{rates.mortgage_15yr:.2f}%" if rates.mortgage_15yr else "N/A"),
-            ("Fed Funds Rate", f"{rates.fed_funds_rate:.2f}%" if rates.fed_funds_rate else "N/A"),
-            ("10-Yr Treasury", f"{rates.treasury_10yr:.2f}%" if rates.treasury_10yr else "N/A"),
-        ])
-
-        # Visual rate gauge
         pdf.horizontal_gauge("30yr Mortgage", rates.mortgage_30yr, 3.0, 9.0, color=BLUE)
         if rates.fed_funds_rate:
             pdf.horizontal_gauge("Fed Funds", rates.fed_funds_rate, 0.0, 6.0, color=NAVY)
         spread = rates.spread_over_treasury
         if spread:
             pdf.horizontal_gauge("Mtg-Treasury Spread", spread, 1.0, 3.5, color=ACCENT_GREEN if spread <= 2.0 else ACCENT_BAR)
+
+        # Additional rates (compact line)
+        extra = []
+        if rates.mortgage_15yr:
+            extra.append(f"15-Yr Fixed: {rates.mortgage_15yr:.2f}%")
+        if rates.treasury_10yr:
+            extra.append(f"10-Yr Treasury: {rates.treasury_10yr:.2f}%")
+        if extra:
+            pdf.ln(2)
+            pdf.set_font("Helvetica", "", 7)
+            pdf.set_text_color(*DARK_TEXT)
+            pdf.cell(0, 3.5, "    ".join(extra), new_x="LMARGIN", new_y="NEXT")
 
         # Layman footnotes for rate indicators
         pdf.ln(3)

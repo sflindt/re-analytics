@@ -469,10 +469,15 @@ if search_clicked:
     # Fetch rates and market data
     with st.spinner("Loading rate environment and market data..."):
         fred_key = os.environ.get("FRED_API_KEY")
+        if not fred_key:
+            st.warning("FRED_API_KEY not found in environment. Add it to your .env file for appreciation data.")
         rates = _run_async(get_current_rates(fred_key))
         st.session_state.rates = rates
         # Fetch metro appreciation
-        st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+        appre = _run_async(fetch_appreciation_fred(fred_key))
+        st.session_state.appreciation = appre
+        if fred_key and not (appre.get("yoy_pct") or appre.get("five_yr_pct")):
+            st.warning("FRED API key found but appreciation data returned empty. Check your key is valid at https://fred.stlouisfed.org/docs/api/api_key.html")
         # Fetch ZIP-level appreciation
         zip_codes = list(set(l.zip_code for l in results if l.zip_code))
         if zip_codes:
