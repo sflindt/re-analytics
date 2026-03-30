@@ -405,6 +405,15 @@ with st.sidebar:
                     st.session_state.search_state = meta.get("state", state).upper()
                     fred_key = os.environ.get("FRED_API_KEY")
                     st.session_state.rates = _run_async(get_current_rates(fred_key))
+                    st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+                    zip_codes = list(set(l.zip_code for l in cached_listings if l.zip_code))
+                    if zip_codes:
+                        st.session_state.zip_appreciation = _run_async(fetch_zip_appreciation(zip_codes))
+                    load_city = meta.get("city", city)
+                    load_state = meta.get("state", state).upper()
+                    st.session_state.population = _run_async(fetch_population_growth(load_city, load_state))
+                    st.session_state.area_news = _run_async(fetch_area_news(load_city, load_state))
+                    st.session_state.market_commentary = None  # regenerated on next view
                     st.rerun()
                 else:
                     st.error("Failed to load cached results.")
@@ -414,6 +423,11 @@ with st.sidebar:
         st.session_state.search_city = DEMO_CITY
         st.session_state.search_state = DEMO_STATE
         st.session_state.rates = DEMO_RATES
+        fred_key = os.environ.get("FRED_API_KEY")
+        st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+        st.session_state.population = _run_async(fetch_population_growth(DEMO_CITY, DEMO_STATE))
+        st.session_state.area_news = _run_async(fetch_area_news(DEMO_CITY, DEMO_STATE))
+        st.session_state.market_commentary = None
         st.rerun()
 
 # --- State management ---
@@ -560,6 +574,11 @@ if not listings:
             st.session_state.search_city = DEMO_CITY
             st.session_state.search_state = DEMO_STATE
             st.session_state.rates = DEMO_RATES
+            fred_key = os.environ.get("FRED_API_KEY")
+            st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+            st.session_state.population = _run_async(fetch_population_growth(DEMO_CITY, DEMO_STATE))
+            st.session_state.area_news = _run_async(fetch_area_news(DEMO_CITY, DEMO_STATE))
+            st.session_state.market_commentary = None
             st.rerun()
     st.stop()
 
