@@ -356,14 +356,18 @@ class REReport(FPDF):
         """Embed a matplotlib chart (BytesIO PNG) into the PDF."""
         if chart_buf is None or chart_buf.getvalue() == b"":
             return
-        # Estimate height from aspect ratio (default ~0.45 ratio)
-        height = width * 0.45
+        # Read actual PNG dimensions for accurate height calculation
+        import struct
+        chart_buf.seek(16)  # PNG IHDR chunk: width at byte 16, height at byte 20
+        img_w, img_h = struct.unpack(">II", chart_buf.read(8))
+        chart_buf.seek(0)
+        height = width * (img_h / img_w)
         # Page break safety
         if self.get_y() + height + 10 > self.h - 25:
             self.add_page()
         x = (self.w - width) / 2  # Center the chart
         self.image(chart_buf, x=x, y=self.get_y(), w=width)
-        self.set_y(self.get_y() + height + 6)
+        self.set_y(self.get_y() + height + 8)
         if caption:
             self.set_font("Helvetica", "I", 6)
             self.set_text_color(*LIGHT_TEXT)
@@ -372,10 +376,15 @@ class REReport(FPDF):
 
     def embed_chart_pair(self, left_buf, right_buf, width: float = 82, caption: str = ""):
         """Embed two charts side-by-side in the PDF."""
+        import struct
         bufs = [b for b in (left_buf, right_buf) if b is not None and b.getvalue() != b""]
         if not bufs:
             return
-        height = width * 0.50
+        # Read actual height from first image
+        bufs[0].seek(16)
+        img_w, img_h = struct.unpack(">II", bufs[0].read(8))
+        bufs[0].seek(0)
+        height = width * (img_h / img_w)
         if self.get_y() + height + 10 > self.h - 25:
             self.add_page()
         gap = 4
@@ -847,8 +856,9 @@ def generate_report(
         yoy = appreciation.get("yoy_pct")
         fiveyr = appreciation.get("five_yr_pct")
         annualized = ((1 + fiveyr / 100) ** 0.2 - 1) * 100 if fiveyr is not None else None
-        pdf.subsection_title("Home Price Appreciation (Metro)")
-        appre_buf = chart_appreciation(yoy, fiveyr, annualized)
+        metro_label = appreciation.get("metro_label", "Metro")
+        pdf.subsection_title(f"Home Price Appreciation ({metro_label})")
+        appre_buf = chart_appreciation(yoy, fiveyr, annualized, title=f"Home Price Appreciation — {metro_label}")
         pdf.embed_chart(appre_buf, width=85, caption="Source: FHFA House Price Index")
     else:
         pdf.subsection_title("Home Price Appreciation")

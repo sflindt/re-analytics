@@ -127,14 +127,62 @@ def get_fallback_rates() -> RateSnapshot:
     )
 
 
-async def fetch_appreciation_fred(api_key: str | None = None) -> dict:
-    """Fetch FHFA House Price Index for SLC metro from FRED.
+# CBSA codes for major US metros — maps lowercase city name to CBSA code.
+# FHFA HPI series pattern: ATNHPIUS{CBSA}Q
+METRO_CBSA = {
+    "new york": "35620", "los angeles": "31080", "chicago": "16980",
+    "dallas": "19100", "houston": "26420", "washington": "47900",
+    "philadelphia": "37980", "miami": "33100", "atlanta": "12060",
+    "boston": "14460", "phoenix": "38060", "san francisco": "41860",
+    "riverside": "40140", "detroit": "19820", "seattle": "42660",
+    "minneapolis": "33460", "san diego": "41740", "tampa": "45300",
+    "denver": "19740", "st. louis": "41180", "baltimore": "12580",
+    "orlando": "36740", "charlotte": "16740", "san antonio": "41700",
+    "portland": "38900", "sacramento": "40900", "pittsburgh": "38300",
+    "austin": "12420", "las vegas": "29820", "cincinnati": "17140",
+    "kansas city": "28140", "columbus": "18140", "indianapolis": "26900",
+    "cleveland": "17460", "san jose": "41940", "nashville": "34980",
+    "virginia beach": "47260", "jacksonville": "27260",
+    "providence": "39300", "milwaukee": "33340", "oklahoma city": "36420",
+    "raleigh": "39580", "memphis": "32820", "richmond": "40060",
+    "louisville": "31140", "new orleans": "35380", "salt lake city": "41620",
+    "hartford": "25540", "birmingham": "13820", "buffalo": "15380",
+    "rochester": "40380", "tucson": "46060", "tulsa": "46140",
+    "fresno": "23420", "omaha": "36540", "boise": "14260",
+    "provo": "39340", "ogden": "36260", "st. george": "41100",
+    "logan": "30860",
+    # Common short names
+    "nyc": "35620", "la": "31080", "sf": "41860", "dc": "47900",
+    "slc": "41620", "phx": "38060", "atl": "12060",
+}
 
-    Series: ATNHPIUS41620Q  (All-Transactions HPI, SLC MSA, quarterly)
-    Returns dict with 'yoy_pct' and 'five_yr_pct' appreciation.
+
+def _get_cbsa(city: str, state: str) -> str | None:
+    """Look up CBSA code for a city. Tries exact match, then fuzzy prefix."""
+    key = city.lower().strip()
+    if key in METRO_CBSA:
+        return METRO_CBSA[key]
+    # Try prefix match (e.g. "Salt Lake" matches "salt lake city")
+    for metro, cbsa in METRO_CBSA.items():
+        if metro.startswith(key) or key.startswith(metro):
+            return cbsa
+    return None
+
+
+async def fetch_appreciation_fred(api_key: str | None = None, city: str = "", state: str = "") -> dict:
+    """Fetch FHFA House Price Index for a metro from FRED.
+
+    Dynamically looks up the CBSA code for the given city/state.
+    Falls back to national index (USSTHPI) if no metro match found.
     """
-    series_id = "ATNHPIUS41620Q"
-    result: dict[str, float | None] = {"yoy_pct": None, "five_yr_pct": None, "values": []}
+    cbsa = _get_cbsa(city, state) if city else None
+    if cbsa:
+        series_id = f"ATNHPIUS{cbsa}Q"
+        metro_label = f"{city.title()} Metro"
+    else:
+        series_id = "USSTHPI"  # National index fallback
+        metro_label = "U.S. National"
+    result: dict = {"yoy_pct": None, "five_yr_pct": None, "values": [], "metro_label": metro_label}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

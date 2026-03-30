@@ -264,7 +264,7 @@ def chart_comp_scatter(
     ax.grid(axis="both", alpha=0.2, linewidth=0.5)
     ax.set_title("Comparable Properties: Price vs Size", fontsize=TITLE_SIZE, color=NAVY, pad=8)
     ax.legend(fontsize=6, loc="upper left", framealpha=0.8)
-    fig.subplots_adjust(bottom=0.18)
+    fig.subplots_adjust(bottom=0.22)
 
     return _fig_to_bytes(fig)
 
@@ -274,6 +274,7 @@ def chart_appreciation(
     five_yr: float | None,
     annualized: float | None = None,
     figsize: tuple[float, float] = (3.2, 1.6),
+    title: str = "Home Price Appreciation",
 ) -> io.BytesIO:
     """Horizontal bar chart for appreciation percentages."""
     _setup_style()
@@ -305,7 +306,7 @@ def chart_appreciation(
     ax.set_yticklabels(labels, fontsize=7)
     ax.set_xlabel("% Change", fontsize=7)
     ax.axvline(x=0, color=MID_GRAY, linewidth=0.5, zorder=0)
-    ax.set_title("Home Price Appreciation", fontsize=TITLE_SIZE, color=NAVY, pad=6)
+    ax.set_title(title, fontsize=TITLE_SIZE - 1, color=NAVY, pad=6)
 
     for bar, val in zip(bars, values):
         x_pos = bar.get_width() + (max(abs(v) for v in values) * 0.05 if val >= 0 else -max(abs(v) for v in values) * 0.05)

@@ -224,6 +224,25 @@ def _median(values: list) -> float | None:
     return round(statistics.median(vals), 1) if vals else None
 
 
+def _ure_url(address: str, city: str, state: str) -> str | None:
+    """Generate a UtahRealEstate.com search link for Utah listings."""
+    if state.upper() != "UT":
+        return None
+    from urllib.parse import quote
+    return f"https://www.utahrealestate.com/search/map.search/query/{quote(address + ', ' + city + ', UT')}"
+
+
+def _listing_links_html(l) -> str:
+    """Build HTML link(s) for a listing — Zillow + UtahRealEstate.com for UT."""
+    parts = []
+    if l.listing_url:
+        parts.append(f"<a href='{l.listing_url}' target='_blank' style='font-size:11px;color:#2E5090'>Zillow</a>")
+    ure = _ure_url(l.address, l.city, l.state)
+    if ure:
+        parts.append(f"<a href='{ure}' target='_blank' style='font-size:11px;color:#2E5090'>UtahRealEstate</a>")
+    return " &nbsp;|&nbsp; ".join(parts) if parts else ""
+
+
 def _score_percentile(value: float | None, values: list[float], lower_is_better: bool = True) -> float:
     """Return a 0-100 score for *value* relative to *values*.
 
@@ -315,6 +334,7 @@ def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.Dat
             "Year Built": l.year_built,
             "Status": _normalize_status(l),
             "URL": l.listing_url,
+            "URE": _ure_url(l.address, l.city, l.state),
             "Latitude": l.latitude,
             "Longitude": l.longitude,
         })
@@ -405,12 +425,12 @@ with st.sidebar:
                     st.session_state.search_state = meta.get("state", state).upper()
                     fred_key = os.environ.get("FRED_API_KEY")
                     st.session_state.rates = _run_async(get_current_rates(fred_key))
-                    st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+                    load_city = meta.get("city", city)
+                    load_state = meta.get("state", state).upper()
+                    st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key, city=load_city, state=load_state))
                     zip_codes = list(set(l.zip_code for l in cached_listings if l.zip_code))
                     if zip_codes:
                         st.session_state.zip_appreciation = _run_async(fetch_zip_appreciation(zip_codes))
-                    load_city = meta.get("city", city)
-                    load_state = meta.get("state", state).upper()
                     st.session_state.population = _run_async(fetch_population_growth(load_city, load_state))
                     st.session_state.area_news = _run_async(fetch_area_news(load_city, load_state))
                     st.session_state.market_commentary = None  # regenerated on next view
@@ -424,7 +444,7 @@ with st.sidebar:
         st.session_state.search_state = DEMO_STATE
         st.session_state.rates = DEMO_RATES
         fred_key = os.environ.get("FRED_API_KEY")
-        st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+        st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key, city=DEMO_CITY, state=DEMO_STATE))
         st.session_state.population = _run_async(fetch_population_growth(DEMO_CITY, DEMO_STATE))
         st.session_state.area_news = _run_async(fetch_area_news(DEMO_CITY, DEMO_STATE))
         st.session_state.market_commentary = None
@@ -488,7 +508,7 @@ if search_clicked:
         rates = _run_async(get_current_rates(fred_key))
         st.session_state.rates = rates
         # Fetch metro appreciation
-        appre = _run_async(fetch_appreciation_fred(fred_key))
+        appre = _run_async(fetch_appreciation_fred(fred_key, city=city, state=state.upper()))
         st.session_state.appreciation = appre
         if fred_key and not (appre.get("yoy_pct") or appre.get("five_yr_pct")):
             st.warning("FRED API key found but appreciation data returned empty. Check your key is valid at https://fred.stlouisfed.org/docs/api/api_key.html")
@@ -575,7 +595,7 @@ if not listings:
             st.session_state.search_state = DEMO_STATE
             st.session_state.rates = DEMO_RATES
             fred_key = os.environ.get("FRED_API_KEY")
-            st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key))
+            st.session_state.appreciation = _run_async(fetch_appreciation_fred(fred_key, city=DEMO_CITY, state=DEMO_STATE))
             st.session_state.population = _run_async(fetch_population_growth(DEMO_CITY, DEMO_STATE))
             st.session_state.area_news = _run_async(fetch_area_news(DEMO_CITY, DEMO_STATE))
             st.session_state.market_commentary = None
@@ -983,6 +1003,7 @@ with tab_map:
                 "dom": l.days_on_market if l.days_on_market is not None else -1,
                 "status": status,
                 "url": l.listing_url or "",
+                "links_html": _listing_links_html(l),
                 "ppsf": f"${l.price_per_sqft:,.0f}" if l.price_per_sqft else "N/A",
                 # Color by status
                 "color_r": 39 if status == "Active" else (46 if status == "Sold" else 230),
@@ -1012,7 +1033,7 @@ with tab_map:
                 "<span style='font-size:18px;font-weight:700;color:#1B2A4A'>{price_str}</span>"
                 "<span style='margin-left:8px;font-size:11px;color:#666'>{ppsf}/sqft</span><br/>"
                 "<span style='font-size:11px'>{beds} bed | {sqft} sqft | {status}</span><br/>"
-                "<a href='{url}' target='_blank' style='font-size:11px;color:#2E5090'>View Listing →</a>"
+                "{links_html}"
                 "</div>"
             ),
             "style": {
