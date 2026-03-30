@@ -156,17 +156,140 @@ METRO_CBSA = {
     "slc": "41620", "phx": "38060", "atl": "12060",
 }
 
+# Suburb → metro CBSA mapping (cities within a metro area)
+SUBURB_CBSA = {
+    # Salt Lake City MSA (41620)
+    "draper": "41620", "sandy": "41620", "south jordan": "41620",
+    "west jordan": "41620", "murray": "41620", "midvale": "41620",
+    "cottonwood heights": "41620", "holladay": "41620", "taylorsville": "41620",
+    "west valley city": "41620", "magna": "41620", "herriman": "41620",
+    "riverton": "41620", "bluffdale": "41620", "alpine": "41620",
+    "highland": "41620", "lehi": "41620", "saratoga springs": "41620",
+    "eagle mountain": "41620", "cedar hills": "41620", "american fork": "41620",
+    "pleasant grove": "41620", "lindon": "41620", "vineyard": "41620",
+    "tooele": "41620", "park city": "41620", "heber city": "41620",
+    "bountiful": "41620", "centerville": "41620", "farmington": "41620",
+    "kaysville": "41620", "layton": "41620", "syracuse": "41620",
+    "clinton": "41620", "clearfield": "41620", "north salt lake": "41620",
+    "woods cross": "41620",
+    # Provo-Orem MSA (39340)
+    "orem": "39340", "provo": "39340", "springville": "39340",
+    "spanish fork": "39340", "mapleton": "39340", "payson": "39340",
+    "salem": "39340", "woodland hills": "39340",
+    # Ogden MSA (36260)
+    "ogden": "36260", "roy": "36260", "riverdale": "36260",
+    "south ogden": "36260", "north ogden": "36260", "pleasant view": "36260",
+    "harrisville": "36260",
+    # St. George MSA (41100)
+    "st. george": "41100", "washington": "41100", "santa clara": "41100",
+    "ivins": "41100", "hurricane": "41100", "la verkin": "41100",
+    # Denver MSA
+    "aurora": "19740", "lakewood": "19740", "arvada": "19740",
+    "centennial": "19740", "thornton": "19740", "westminster": "19740",
+    "broomfield": "19740", "littleton": "19740", "castle rock": "19740",
+    "parker": "19740", "highlands ranch": "19740", "lone tree": "19740",
+    # Phoenix MSA
+    "scottsdale": "38060", "tempe": "38060", "mesa": "38060",
+    "chandler": "38060", "gilbert": "38060", "glendale": "38060",
+    "peoria": "38060", "surprise": "38060", "goodyear": "38060",
+    "queen creek": "38060", "cave creek": "38060", "fountain hills": "38060",
+    # Seattle MSA
+    "bellevue": "42660", "redmond": "42660", "kirkland": "42660",
+    "bothell": "42660", "renton": "42660", "kent": "42660",
+    "tacoma": "42660", "everett": "42660", "federal way": "42660",
+    "sammamish": "42660", "issaquah": "42660", "woodinville": "42660",
+    # Dallas MSA
+    "fort worth": "19100", "plano": "19100", "frisco": "19100",
+    "mckinney": "19100", "arlington": "19100", "irving": "19100",
+    "garland": "19100", "richardson": "19100", "allen": "19100",
+    # Austin MSA
+    "round rock": "12420", "cedar park": "12420", "pflugerville": "12420",
+    "georgetown": "12420", "leander": "12420", "kyle": "12420",
+    # Atlanta MSA
+    "marietta": "12060", "roswell": "12060", "alpharetta": "12060",
+    "johns creek": "12060", "decatur": "12060", "kennesaw": "12060",
+    "lawrenceville": "12060", "duluth": "12060", "peachtree city": "12060",
+    # Nashville MSA
+    "franklin": "34980", "murfreesboro": "34980", "hendersonville": "34980",
+    "brentwood": "34980", "spring hill": "34980", "gallatin": "34980",
+    # Las Vegas MSA
+    "henderson": "29820", "north las vegas": "29820", "summerlin": "29820",
+    # Boise MSA
+    "meridian": "14260", "nampa": "14260", "caldwell": "14260",
+    "eagle": "14260", "kuna": "14260", "star": "14260",
+    # Tampa MSA
+    "st. petersburg": "45300", "clearwater": "45300", "brandon": "45300",
+    "plant city": "45300", "wesley chapel": "45300",
+    # Charlotte MSA
+    "huntersville": "16740", "concord": "16740", "matthews": "16740",
+    "mint hill": "16740", "mooresville": "16740", "indian trail": "16740",
+    # Raleigh MSA
+    "durham": "39580", "cary": "39580", "apex": "39580",
+    "holly springs": "39580", "wake forest": "39580", "morrisville": "39580",
+}
 
-def _get_cbsa(city: str, state: str) -> str | None:
-    """Look up CBSA code for a city. Tries exact match, then fuzzy prefix."""
+# State → default metro CBSA (largest metro per state, fallback)
+STATE_DEFAULT_CBSA = {
+    "AL": ("13820", "Birmingham"), "AK": (None, None), "AZ": ("38060", "Phoenix"),
+    "AR": ("30780", "Little Rock"), "CA": ("31080", "Los Angeles"),
+    "CO": ("19740", "Denver"), "CT": ("25540", "Hartford"),
+    "DE": ("37980", "Philadelphia"), "FL": ("33100", "Miami"),
+    "GA": ("12060", "Atlanta"), "HI": ("46520", "Honolulu"),
+    "ID": ("14260", "Boise"), "IL": ("16980", "Chicago"),
+    "IN": ("26900", "Indianapolis"), "IA": ("19780", "Des Moines"),
+    "KS": ("28140", "Kansas City"), "KY": ("31140", "Louisville"),
+    "LA": ("35380", "New Orleans"), "ME": ("38860", "Portland ME"),
+    "MD": ("12580", "Baltimore"), "MA": ("14460", "Boston"),
+    "MI": ("19820", "Detroit"), "MN": ("33460", "Minneapolis"),
+    "MS": ("27140", "Jackson"), "MO": ("41180", "St. Louis"),
+    "MT": ("13740", "Billings"), "NE": ("36540", "Omaha"),
+    "NV": ("29820", "Las Vegas"), "NH": ("14460", "Boston"),
+    "NJ": ("35620", "New York"), "NM": ("10740", "Albuquerque"),
+    "NY": ("35620", "New York"), "NC": ("16740", "Charlotte"),
+    "ND": ("22020", "Fargo"), "OH": ("18140", "Columbus"),
+    "OK": ("36420", "Oklahoma City"), "OR": ("38900", "Portland"),
+    "PA": ("37980", "Philadelphia"), "RI": ("39300", "Providence"),
+    "SC": ("16740", "Charlotte"), "SD": ("43620", "Sioux Falls"),
+    "TN": ("34980", "Nashville"), "TX": ("19100", "Dallas"),
+    "UT": ("41620", "Salt Lake City"), "VT": ("14460", "Boston"),
+    "VA": ("47900", "Washington DC"), "WA": ("42660", "Seattle"),
+    "WV": ("16620", "Charleston"), "WI": ("33340", "Milwaukee"),
+    "WY": ("16220", "Casper"),
+}
+
+
+def _get_cbsa(city: str, state: str) -> tuple[str | None, str | None]:
+    """Look up CBSA code for a city. Returns (cbsa_code, metro_name).
+
+    Priority: exact city match → suburb match → prefix match → state default.
+    """
     key = city.lower().strip()
+
+    # Exact metro match
     if key in METRO_CBSA:
-        return METRO_CBSA[key]
-    # Try prefix match (e.g. "Salt Lake" matches "salt lake city")
+        return METRO_CBSA[key], city.title()
+
+    # Suburb match
+    if key in SUBURB_CBSA:
+        cbsa = SUBURB_CBSA[key]
+        # Find the metro name for this CBSA
+        metro_name = next((m.title() for m, c in METRO_CBSA.items()
+                          if c == cbsa and len(m) > 3), city.title())
+        return cbsa, metro_name
+
+    # Prefix match (e.g. "Salt Lake" matches "salt lake city")
     for metro, cbsa in METRO_CBSA.items():
         if metro.startswith(key) or key.startswith(metro):
-            return cbsa
-    return None
+            return cbsa, metro.title()
+
+    # State-level fallback
+    st = state.upper().strip()
+    if st in STATE_DEFAULT_CBSA:
+        cbsa, metro_name = STATE_DEFAULT_CBSA[st]
+        if cbsa:
+            return cbsa, metro_name
+
+    return None, None
 
 
 async def fetch_appreciation_fred(api_key: str | None = None, city: str = "", state: str = "") -> dict:
@@ -175,10 +298,10 @@ async def fetch_appreciation_fred(api_key: str | None = None, city: str = "", st
     Dynamically looks up the CBSA code for the given city/state.
     Falls back to national index (USSTHPI) if no metro match found.
     """
-    cbsa = _get_cbsa(city, state) if city else None
+    cbsa, metro_name = _get_cbsa(city, state) if city else (None, None)
     if cbsa:
         series_id = f"ATNHPIUS{cbsa}Q"
-        metro_label = f"{city.title()} Metro"
+        metro_label = f"{metro_name} Metro"
     else:
         series_id = "USSTHPI"  # National index fallback
         metro_label = "U.S. National"
