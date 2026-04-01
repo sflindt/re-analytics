@@ -24,6 +24,7 @@ dependencies = [
     "matplotlib>=3.7",
     "plotly>=5.15",
     "pydeck>=0.8",
+    "supabase>=2.0",
 ]
 
 [project.optional-dependencies]

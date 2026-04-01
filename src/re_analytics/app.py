@@ -344,6 +344,71 @@ def _listings_to_df(listings: list[Listing], params: InvestmentParams) -> pd.Dat
     return df
 
 
+from re_analytics.auth import is_auth_enabled, request_access, check_access
+
+# --- Access gate (only when Supabase is configured) ---
+
+if is_auth_enabled():
+    if "authenticated_email" not in st.session_state:
+        st.session_state.authenticated_email = None
+
+    if not st.session_state.authenticated_email:
+        st.markdown(
+            f"""
+            <div style="text-align:center;padding:60px 20px 20px">
+                <h1 style="color:{NAVY};font-size:2.4rem;font-weight:800;letter-spacing:-0.03em">
+                    RE Analytics
+                </h1>
+                <p style="color:{DARK_TEXT};font-size:1.05rem;margin-top:8px">
+                    Professional Real Estate Investment Intelligence
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        gate_tab_login, gate_tab_signup = st.tabs(["Sign In", "Request Access"])
+
+        with gate_tab_login:
+            login_email = st.text_input("Email address", key="login_email", placeholder="you@example.com")
+            if st.button("Sign In", type="primary", use_container_width=True, key="login_btn"):
+                if login_email:
+                    status = check_access(login_email.strip().lower())
+                    if status == "approved":
+                        st.session_state.authenticated_email = login_email.strip().lower()
+                        st.rerun()
+                    elif status == "pending":
+                        st.warning("Your access request is pending approval. You'll receive an email when approved.")
+                    elif status == "denied":
+                        st.error("Your access request was not approved. Contact the administrator.")
+                    else:
+                        st.info("No account found. Use the **Request Access** tab to sign up.")
+                else:
+                    st.warning("Please enter your email address.")
+
+        with gate_tab_signup:
+            signup_name = st.text_input("Full name", key="signup_name", placeholder="Jane Smith")
+            signup_email = st.text_input("Email address", key="signup_email", placeholder="you@example.com")
+            if st.button("Request Access", type="primary", use_container_width=True, key="signup_btn"):
+                if signup_name and signup_email:
+                    result = request_access(signup_email, signup_name)
+                    if result == "submitted":
+                        st.success("Access requested! You'll be notified by email once approved.")
+                    elif result == "already_pending":
+                        st.info("You've already submitted a request. Please wait for approval.")
+                    elif result == "approved":
+                        st.session_state.authenticated_email = signup_email.strip().lower()
+                        st.rerun()
+                    elif result == "denied":
+                        st.error("Your previous request was not approved. Contact the administrator.")
+                    else:
+                        st.error("Something went wrong. Please try again.")
+                else:
+                    st.warning("Please enter both your name and email.")
+
+        st.stop()
+
+
 # --- Sidebar ---
 
 with st.sidebar:
